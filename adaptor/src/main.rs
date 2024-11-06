@@ -1,7 +1,8 @@
-use crate::funadaptor::m2;
+use crate::adaptorprotocol::key4sig;
 
+mod adaptorprotocol;
 mod funadaptor;
 
 fn main() {
-   m2();
+    key4sig();
 }
