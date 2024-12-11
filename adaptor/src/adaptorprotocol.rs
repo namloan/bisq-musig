@@ -11,7 +11,7 @@ This module we try to simulate a peer to peer communication for 2of2 Multisig wi
 Now Alice says, if you give me your signature for this transaction of the multisig, then you can
 retrieve the private key for this public key.
 
-Here this is all done scripttless.
+Here this is all done scriptless.
  */
 pub(crate) fn key4sig() {
     // create the Alice and Bob
@@ -119,6 +119,8 @@ impl M2a {
     fn exchange_pubkey(&mut self, opub: Point) -> Point {
         self.other_pubkey = Some(opub);
         // now we can compute the aggregated key
+        // the public keys need to be ordered, otherwise alice and Bob will compute different
+        // aggregated key from same public keys.
         let pubkeys = if opub < self.pub_key {
             [self.pub_key, opub]
         } else {

@@ -2,7 +2,7 @@ use musig2::{AdaptorSignature, KeyAggContext, PartialSignature};
 use secp::{MaybeScalar, Point, Scalar};
 // Using the functional API.
 
-pub(crate) fn m2() {
+pub(crate) fn _m2() {
     let seckeys = [
         Scalar::from_slice(&[0x11; 32]).unwrap(),
         Scalar::from_slice(&[0x22; 32]).unwrap(),
