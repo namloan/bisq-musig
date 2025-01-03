@@ -8,7 +8,8 @@ use std::{collections::HashMap, env, error::Error, process::Command, str::FromSt
 
 // Bitcoin and BDK-related imports
 use crate::{
-    ConnectedWallet, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL, DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
+    ConnectedWallet, DepositTx, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL,
+    DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
 };
 use bdk_core::bitcoin::Network::Bitcoin;
 use bdk_core::{
@@ -62,6 +63,16 @@ electrs localhost:30000
 --
  */
 #[test]
+fn test_2input_tx() {
+    println!("running...");
+    check_start();
+    let mut alice = funded_wallet();
+    let mut bob = funded_wallet();
+    let dep = DepositTx::new(&mut alice, &mut bob).unwrap();
+    tiktok();
+    println!("Txid = {:?}", dep.psbt.extract_tx());
+}
+#[test]
 fn test_wallet() {
     println!("running...");
     check_start();
@@ -84,7 +95,7 @@ fn funded_wallet() -> TestWallet {
     let adr = wallet.next_unused_address().to_string();
     println!("address = {}", adr);
     fund_address(&*adr);
-    thread::sleep(time::Duration::from_secs(3));
+    thread::sleep(time::Duration::from_secs(2));
     wallet.sync().unwrap();
     println!("\nCurrent wallet amount: {}", wallet.balance());
     assert!(wallet.balance() >= Amount::from_btc(1.0).unwrap());
