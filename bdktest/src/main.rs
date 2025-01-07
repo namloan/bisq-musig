@@ -2,14 +2,14 @@ mod nigiri;
 
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::bip32::Xpriv;
 use bdk_electrum::{electrum_client, BdkElectrumClient};
-use bdk_wallet::bitcoin::psbt::Input;
-use bdk_wallet::bitcoin::{Amount, FeeRate, Network, Psbt, TxOut, Txid, Weight};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Network, Psbt, Txid, Weight};
 use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::template::{Bip86, DescriptorTemplate};
 use bdk_wallet::{AddressInfo, KeychainKind, PersistedWallet, SignOptions, Wallet};
 use rand::RngCore;
 use std::collections::HashSet;
 use std::io::Write;
+use std::str::FromStr;
 
 const DESCRIPTOR_PRIVATE_EXTERNAL: &str = "tr(tprv8ZgxMBicQKsPejo7mjMzejAWDQYi1UtxzyxJfNbvtPqCsVFkZAEj7hnnrH938bXWMccgkj9BQmduhnmmjS41rAXE8atPLkLUadrXLUffpd8/86'/1'/0'/0/*)#w0y7v8y2";
 const DESCRIPTOR_PRIVATE_INTERNAL: &str = "tr(tprv8ZgxMBicQKsPejo7mjMzejAWDQYi1UtxzyxJfNbvtPqCsVFkZAEj7hnnrH938bXWMccgkj9BQmduhnmmjS41rAXE8atPLkLUadrXLUffpd8/86'/1'/0'/1/*)";
@@ -32,44 +32,51 @@ struct DepositTx {
 }
 
 impl DepositTx {
-    fn new(alice: &mut TestWallet, bob: &mut TestWallet) -> anyhow::Result<DepositTx> {
+    fn new(mut alice: TestWallet, mut bob: TestWallet) -> anyhow::Result<DepositTx> {
         // alice makes pbst which will get singed by bob
-        // let w = &mut alice.wallet;
 
-        // let alice_out = alice.wallet.list_output().next().unwrap().outpoint;
-        // TODO next line is a quirks, make the wallet pick the right utxo(s) instead of just using the first one.
-        let output = bob.wallet.list_output().next().unwrap(); // first utxo may not have enough funds on it.
-        let bob_out = output.outpoint;
-        dbg!(bob_out);
+        let deposit_address =
+            Address::from_str("bcrt1pjvx4sh3w3n2qwwrn8fdswtpqwneelwm3nvqp8ys3wap6znvc5k9q9nen7q")?;
+        let deposit_script = deposit_address.assume_checked().script_pubkey();
 
-        // from psbt only field witness_utxo is being used. (for segwit transactions)
-        let tout: TxOut = output.txout;
-        let mut input = Input::default();
-        input.witness_utxo = Some(tout.clone());
+        let mut txbob = bob.wallet.build_tx();
+        txbob.add_recipient(deposit_script.clone(), Amount::from_btc(1.5)?);
+        let psbtbob = txbob.finish()?;
+        dbg!(&psbtbob);
 
-        // TODO: how to calculate the satisfaction weight?
+        // add all inputs from Bob
         let mut builder = alice.wallet.build_tx();
+        let tx = psbtbob.clone().extract_tx()?;
+        dbg!(&tx);
+
+        for (index, psbt_input) in psbtbob.inputs.iter().enumerate() {
+            let op = tx.input[index].previous_output; // yes, you are seeing right, index in tx and psbt_input must match
+            builder.add_foreign_utxo(op, psbt_input.clone(), Weight::from_wu(3))?;
+            // TODO: how to calculate the satisfaction weight?
+            // alicewallet.insert_txout(op, prev_utxo); // do we need this??
+            // add (all) change outputs from Bob
+        }
+
+        // find the change TxOut from Bob and add them
+        for txout in tx.output.iter() {
+            let scriptbuf = txout.script_pubkey.clone();
+            if scriptbuf != deposit_script {
+                builder.add_recipient(scriptbuf, txout.value);
+            }
+        }
+
         builder
-            .add_foreign_utxo(bob_out, input, Weight::from_wu(3))?
-            .add_recipient(
-                bob.next_unused_address().script_pubkey(),
-                Amount::from_btc(1.5)?,
-            ) // to address should be calculated from musig
+            .add_recipient(deposit_script, Amount::from_btc(2.2)?) // to address should be calculated from musig
+            // TODO add change output from bob as well.
             .fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO calc real feerate
         let mut psbt = builder.finish()?;
 
-        alice.wallet.insert_txout(bob_out, tout);
-        let sign = SignOptions {
-            trust_witness_utxo: true, // TODO why not send the non-witness_utxo as well??
-            ..SignOptions::default()
-        };
-
         // Alice signs her part
-        let alice_signed = alice.wallet.sign(&mut psbt, sign.clone())?;
+        let alice_signed = alice.wallet.sign(&mut psbt, SignOptions::default())?;
         assert!(!alice_signed);
 
         // Send the PSBT to Bob for signing
-        let bob_signed = bob.wallet.sign(&mut psbt, sign)?;
+        let bob_signed = bob.wallet.sign(&mut psbt, SignOptions::default())?;
         assert!(bob_signed);
 
         // At this point, the PSBT should be fully signed; finalize the transaction
@@ -117,12 +124,12 @@ impl TestWallet {
 
         let request = self.wallet.start_full_scan().inspect({
             let mut stdout = std::io::stdout();
-            let mut once = HashSet::<KeychainKind>::new();
+            // let mut once = HashSet::<KeychainKind>::new();
             move |k, spk_i, _| {
-                if once.insert(k) {
-                    print!("\nScanning keychain [{:?}]", k);
-                }
-                print!(" {:<3}", spk_i);
+                // if once.insert(k) {
+                //     print!("\nScanning keychain [{:?}]", k);
+                // }
+                // print!(" {:<3}", spk_i);
                 stdout.flush().expect("must flush");
             }
         });
