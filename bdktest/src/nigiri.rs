@@ -66,9 +66,11 @@ electrs localhost:30000
 fn test_2input_tx() {
     println!("running...");
     check_start();
-    let mut alice = funded_wallet();
+    let alice = funded_wallet();
     let mut bob = funded_wallet();
-    let dep = DepositTx::new(&mut alice, &mut bob).unwrap();
+    fund_wallet(&mut bob);
+
+    let dep = DepositTx::new(alice, bob).unwrap();
     tiktok();
     println!("Txid = {:?}", dep.psbt.extract_tx());
 }
@@ -91,15 +93,26 @@ fn test_wallet() {
 fn funded_wallet() -> TestWallet {
     println!("loading wallet...");
     let mut wallet = TestWallet::new().unwrap();
+    fund_wallet(&mut wallet);
+    wallet
+}
+fn fund_wallet(wallet: &mut TestWallet) {
+    let initial_balance = wallet.balance();
     // load some more coin to wallet
     let adr = wallet.next_unused_address().to_string();
     println!("address = {}", adr);
     fund_address(&*adr);
-    thread::sleep(time::Duration::from_secs(2));
-    wallet.sync().unwrap();
-    println!("\nCurrent wallet amount: {}", wallet.balance());
+    loop {
+        thread::sleep(time::Duration::from_secs(1));
+        wallet.sync().unwrap();
+        let balance = wallet.balance();
+        println!("\nCurrent wallet amount: {}", balance);
+
+        if balance > initial_balance {
+            break;
+        }
+    }
     assert!(wallet.balance() >= Amount::from_btc(1.0).unwrap());
-    wallet
 }
 
 #[test]
@@ -163,7 +176,7 @@ fn fund_address(address: &str) {
         .output()
         .expect("Failed to fund Alice's wallet");
     eprintln!("{}", String::from_utf8_lossy(&faucet_response.stdout));
-    thread::sleep(time::Duration::from_secs(2)); // Add delays between steps
+    // thread::sleep(time::Duration::from_secs(2)); // Add delays between steps
 
     eprintln!("Mining mining to {}", address);
     let resp = mine(address, 1);
