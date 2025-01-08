@@ -1,7 +1,6 @@
 // External crates
 use dotenv::dotenv;
 use rand::RngCore;
-use secp256k1::{Keypair, XOnlyPublicKey};
 // Standard library imports
 use std::process::Output;
 use std::{collections::HashMap, env, error::Error, process::Command, str::FromStr, thread, time};
@@ -11,10 +10,15 @@ use crate::{
     ConnectedWallet, DepositTx, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL,
     DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
 };
+
 use bdk_core::bitcoin::Network::Bitcoin;
 use bdk_core::{
-    bitcoin::{self, secp256k1::Secp256k1, Amount, Network, Txid, WitnessVersion},
-    spk_client::{FullScanRequestBuilder, FullScanResult, SyncRequestBuilder, SyncResult},
+    bitcoin::{
+        self,
+        secp256k1::{Keypair, Secp256k1, XOnlyPublicKey},
+        Amount, Network, Txid, WitnessVersion,
+    },
+    spk_client::{FullScanRequestBuilder, SyncRequestBuilder},
 };
 use bdk_electrum::{electrum_client, BdkElectrumClient};
 use bdk_esplora::esplora_client::Builder;
@@ -393,7 +397,7 @@ fn testtap() {
     let mut pk_map = HashMap::new();
 
     // We require secp for generating a random XOnlyPublicKey
-    let secp = secp256k1::Secp256k1::new();
+    let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand::thread_rng());
     // Random unspendable XOnlyPublicKey provided for compilation to Taproot Descriptor
     let (unspendable_pubkey, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
@@ -486,7 +490,7 @@ fn test_policy2descriptor() {
     let mut pk_map = HashMap::new();
 
     // We require secp for generating a random XOnlyPublicKey
-    let secp = secp256k1::Secp256k1::new();
+    let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand::thread_rng());
     // Random unspendable XOnlyPublicKey provided for compilation to Taproot Descriptor
     let (unspendable_pubkey, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
@@ -548,8 +552,7 @@ fn _wallet_create() -> anyhow::Result<()> {
         esplora_client::Builder::new("https://mutinynet.com/api").build_blocking();
 
     let full_scan_request: FullScanRequestBuilder<KeychainKind> = wallet.start_full_scan();
-    let update: FullScanResult<KeychainKind> =
-        client.full_scan(full_scan_request, STOP_GAP, PARALLEL_REQUESTS)?;
+    let update = client.full_scan(full_scan_request, STOP_GAP, PARALLEL_REQUESTS)?;
     wallet.apply_update(update)?;
     wallet.persist(&mut conn)?;
     println!("Wallet balance: {} sat", wallet.balance().total().to_sat());
@@ -587,16 +590,14 @@ fn deposit_tx(address_string: &str) -> anyhow::Result<()> {
 
     let pa = Address::from_str(address_string)?.require_network(Network::Signet)?;
 
-    let mut psbt = wallet
-        .build_tx()
-        .add_recipient(pa.script_pubkey(), Amount::from_sat(5000))
-        // .add_utxo(outpoint_from_bob)
-        .clone()
-        .finish()
-        .expect("valid psbt");
+    let mut builder = wallet.build_tx();
+    builder.add_recipient(pa.script_pubkey(), Amount::from_sat(5000));
+    // .add_utxo(outpoint_from_bob)
+
+    let psbt = builder.finish().expect("valid psbt");
 
     // sign my input
-    let _b = wallet.sign(&mut psbt, Default::default())?;
+    // let _b = wallet.sign(&mut psbt, Default::default())?;
     // return pbst for Bob to sign
     // print transaction
     dbg!(&psbt);
@@ -626,7 +627,7 @@ fn update_balance() -> Result<PersistedWallet<Connection>, anyhow::Error> {
         wallet.start_sync_with_revealed_spks();
     let client: esplora_client::BlockingClient =
         Builder::new("https://mutinynet.com/api").build_blocking();
-    let update: SyncResult = client.sync(sync_request, PARALLEL_REQUESTS)?;
+    let update = client.sync(sync_request, PARALLEL_REQUESTS)?;
     wallet.apply_update(update).unwrap();
     wallet.persist(&mut conn)?;
     println!("Wallet balance: {} sat", &wallet.balance().total().to_sat());
