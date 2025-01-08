@@ -99,11 +99,11 @@ We can prove that this pre-signature is indeed a valid adaptor signature by mult
 setting $e:=H_{sig}(R,P,m)$:
 
 $\begin{eqnarray}
-s\cdot G &=& s_a\cdot G+s_b\cdot G \\
+s\cdot G &=& s_a\cdot G+s_b\cdot G ;| \hspace{3pt} with (4) \\
 &=&(r_{a,1} + b \cdot r_{a,2} + a_a \cdot e \cdot p_a)\cdot G + (r_{b,1}+b \cdot r_{b,2} + a_b \cdot e \cdot p_b)\cdot G \\
-&=&R_{a,1}+b\cdot R_{a,2} + a_a\cdot e \cdot P_a + R_{b,1}+b\cdot R_{b,2} + a_b\cdot e \cdot P_b;|with (2) \\
-&=& R_1 + b \cdot R_2 + a_a \cdot e \cdot P_a + a_b \cdot e \cdot P_b;| with (1) \\
-&=& R_1 + b \cdot R_2 + e \cdot P;|with (3) \\
+&=&R_{a,1}+b\cdot R_{a,2} + a_a\cdot e \cdot P_a + R_{b,1}+b\cdot R_{b,2} + a_b\cdot e \cdot P_b;| \hspace{3pt} with (2) \\
+&=& R_1 + b \cdot R_2 + a_a \cdot e \cdot P_a + a_b \cdot e \cdot P_b;| \hspace{3pt} with (1) \\
+&=& R_1 + b \cdot R_2 + e \cdot P;| \hspace{3pt} with (3) \\
 &=& R - T + e \cdot P
 \end{eqnarray}$
 
