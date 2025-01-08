@@ -45,16 +45,26 @@ impl DepositTx {
         dbg!(&psbtbob);
 
         // add all inputs from Bob
-        let mut builder = alice.wallet.build_tx();
         let tx = psbtbob.clone().extract_tx()?;
         dbg!(&tx);
+        // check bobs inputs, if they are not spoofed
+        for pbst_input in psbtbob.inputs.iter() {
+            let scriptbuf = pbst_input.clone().witness_utxo.unwrap().script_pubkey;
+            if alice.wallet.is_mine(scriptbuf.clone()) {
+                // bob is trying to trick me.
+                panic!(
+                    "Fraud detected. Bob send me my own scriptbuf {:?}",
+                    scriptbuf
+                )
+            }
+        }
 
+        let mut builder = alice.wallet.build_tx();
         for (index, psbt_input) in psbtbob.inputs.iter().enumerate() {
             let op = tx.input[index].previous_output; // yes, you are seeing right, index in tx and psbt_input must match
             builder.add_foreign_utxo(op, psbt_input.clone(), Weight::from_wu(3))?;
             // TODO: how to calculate the satisfaction weight?
             // alicewallet.insert_txout(op, prev_utxo); // do we need this??
-            // add (all) change outputs from Bob
         }
 
         // find the change TxOut from Bob and add them
@@ -67,7 +77,6 @@ impl DepositTx {
 
         builder
             .add_recipient(deposit_script, Amount::from_btc(2.2)?) // to address should be calculated from musig
-            // TODO add change output from bob as well.
             .fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO calc real feerate
         let mut psbt = builder.finish()?;
 
