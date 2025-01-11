@@ -1,15 +1,13 @@
+// Bitcoin and BDK-related imports
+use crate::{
+    build_and_merge_tx, generate_part_tx, transfer_sig_and_broadcast, ConnectedWallet, DepositTx,
+    ProtocolRole, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL, DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
+};
 // External crates
 use dotenv::dotenv;
 use rand::RngCore;
-// Standard library imports
 use std::process::Output;
 use std::{collections::HashMap, env, error::Error, process::Command, str::FromStr, thread, time};
-
-// Bitcoin and BDK-related imports
-use crate::{
-    ConnectedWallet, DepositTx, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL,
-    DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
-};
 
 use bdk_core::bitcoin::Network::Bitcoin;
 use bdk_core::{
@@ -54,6 +52,33 @@ electrs localhost:50000
 electrs localhost:30000
 
  */
+
+/** run protocol as library
+using security by identical generation
+*/
+#[test]
+fn test_protocol() -> anyhow::Result<()> {
+    println!("running...");
+    check_start();
+    let mut alice = funded_wallet();
+    let mut bob = funded_wallet();
+    fund_wallet(&mut bob);
+
+    // Round 1
+    let alice_psbt = generate_part_tx(&mut alice, ProtocolRole::Seller)?;
+    let bob_psbt = generate_part_tx(&mut bob, ProtocolRole::Buyer)?;
+    // Round2
+    let alice_signed = build_and_merge_tx(&mut alice, alice_psbt.clone(), bob_psbt.clone(), ProtocolRole::Seller)?;
+    let bob_signed = build_and_merge_tx(&mut bob, bob_psbt, alice_psbt, ProtocolRole::Buyer)?;
+    // Round 3
+    let alice_txid = transfer_sig_and_broadcast(&alice, alice_signed.clone(), bob_signed.clone(), ProtocolRole::Seller)?;
+    println!("Alice txid = {}", alice_txid);
+    let bob_txid = transfer_sig_and_broadcast(&bob, bob_signed, alice_signed, ProtocolRole::Seller)?;
+    println!("Bob txid = {}", bob_txid);
+    tiktok();
+    Ok(())
+}
+
 /*
 -  create_load wallet
 - what balance
@@ -238,14 +263,14 @@ fn generate_ms_descriptor_from_tx() -> anyhow::Result<()> {
     // let descriptor = "tr(musig(".to_owned()
     let descriptor = "sh(multi(1,".to_owned()
         + &*tx.input[0].witness[1]
-            .into_iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
         + ","
         + &*tx.input[1].witness[1]
-            .into_iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
         + "))";
 
     dbg!(&descriptor);
@@ -282,7 +307,7 @@ fn policy_test() -> Result<(), Box<dyn Error>> {
             )
         )
     )"
-    .replace(&[' ', '\n', '\t'][..], "");
+        .replace(&[' ', '\n', '\t'][..], "");
 
     println!("Compiling policy: \n{}", policy_str);
 
@@ -349,7 +374,7 @@ fn testtap() {
             1@and(pk(In), older(9))
             )
         )"
-    .replace(&[' ', '\n', '\t'][..], "");
+        .replace(&[' ', '\n', '\t'][..], "");
 
     // let _ms = Miniscript::<String, Tap>::from_str("and_v(v:ripemd160(H),pk(A))").unwrap();
     let pol = Concrete::<String>::from_str(&pol_str).unwrap();
@@ -427,8 +452,8 @@ fn testtap() {
     let expected_addr = bitcoin::Address::from_str(
         "bc1p4l2xzq7js40965s5w0fknd287kdlmt2dljte37zsc5a34u0h9c4q85snyd",
     )
-    .unwrap()
-    .assume_checked();
+        .unwrap()
+        .assume_checked();
     assert_eq!(addr, expected_addr);
 }
 
@@ -472,7 +497,7 @@ fn test_policy2descriptor() {
             1@and(pk(In), older(9))
             )
         )"
-    .replace(&[' ', '\n', '\t'][..], "");
+        .replace(&[' ', '\n', '\t'][..], "");
     let pol = Concrete::<String>::from_str(&pol_str).unwrap();
     // In case we can't find an internal key for the given policy, we set the internal key to
     // a random pubkey as specified by BIP341 (which are *unspendable* by any party :p)

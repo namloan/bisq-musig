@@ -22,3 +22,4 @@ Bob has provided signature for all his inputs. Do not sign after importing Bob s
 Check if the resulting Tx is valid (input and out amounts??)
 
 broadcast the transaction (maybe check if other hasn't broadcast yet)
+
