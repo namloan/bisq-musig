@@ -9,6 +9,7 @@ use rand::RngCore;
 use std::process::Output;
 use std::{collections::HashMap, env, error::Error, process::Command, str::FromStr, thread, time};
 
+use crate::musig_protocol::MusigProtocol;
 use bdk_core::bitcoin::Network::Bitcoin;
 use bdk_core::{
     bitcoin::{
@@ -21,7 +22,9 @@ use bdk_core::{
 use bdk_electrum::{electrum_client, BdkElectrumClient};
 use bdk_esplora::esplora_client::Builder;
 use bdk_esplora::{esplora_client, EsploraExt};
-use bdk_wallet::miniscript::{translate_hash_fail, Tap};
+use bdk_wallet::bitcoin::key::TapTweak;
+use bdk_wallet::bitcoin::KnownHrp;
+use bdk_wallet::miniscript::{translate_hash_fail, Tap, ToPublicKey};
 use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::{
     bitcoin::{bip32::Xpriv, Address},
@@ -53,6 +56,34 @@ electrs localhost:30000
 
  */
 
+/** run protocol as library
+using security by identical generation
+*/
+#[test]
+fn test_musig_protocol() -> anyhow::Result<()> {
+    println!("running...");
+    check_start();
+    let alice_funds = funded_wallet();
+    let mut bob_funds = funded_wallet();
+    fund_wallet(&mut bob_funds);
+
+    let alice = &mut MusigProtocol::new(alice_funds, ProtocolRole::Seller)?;
+    let bob = &mut MusigProtocol::new(bob_funds, ProtocolRole::Buyer)?;
+
+    // Round 1
+    let alice_psbt = &alice.generate_part_tx()?;
+    let bob_psbt = &bob.generate_part_tx()?;
+    // Round2
+    let alice_signed = &alice.build_and_merge_tx(alice_psbt, bob_psbt)?;
+    let bob_signed = &bob.build_and_merge_tx(bob_psbt, alice_psbt)?;
+    // Round 3
+    let alice_txid = alice.transfer_sig_and_broadcast(alice_signed, bob_signed)?;
+    println!("Alice txid = {}", alice_txid);
+    let bob_txid = bob.transfer_sig_and_broadcast(bob_signed, alice_signed)?;
+    println!("Bob txid = {}", bob_txid);
+    tiktok();
+    Ok(())
+}
 /** run protocol as library
 using security by identical generation
 */
@@ -556,6 +587,15 @@ fn create_new_keys() {
     let change_descriptor_string_priv = change_descriptor.to_string_with_secret(&change_key_map);
     dbg!(&descriptor_string_priv);
     dbg!(&change_descriptor_string_priv);
+
+    let secp = Secp256k1::new();
+
+    let address = Address::p2tr_tweaked(
+        xprv.to_priv().public_key(&secp).to_x_only_pubkey().dangerous_assume_tweaked(),
+        KnownHrp::Regtest,
+    );
+
+    println!("Generated Bitcoin Address: {}", address);
 }
 
 const DB_PATH: &str = "bdk-example-esplora-blocking.db";

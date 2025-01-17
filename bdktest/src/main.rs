@@ -1,4 +1,5 @@
 mod nigiri;
+mod musig_protocol;
 
 use anyhow::anyhow;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::bip32::Xpriv;
@@ -36,7 +37,7 @@ enum ProtocolRole {
 }
 // TODO P_a and Q_a should be replaced by  public keys generated for MuSig2
 const P_A_STRING: &'static str = "bcrt1pjvx4sh3w3n2qwwrn8fdswtpqwneelwm3nvqp8ys3wap6znvc5k9q9nen7q";
-const Q_A_STRING: &'static str = "bcrt1pjvx4sh3w3n2qwwrn8fdswtpqwneelwm3nvqp8ys3wap6znvc5k9q9nen7q";
+const Q_A_STRING: &'static str = "bcrt1pg0m5rem5f3jcqxzc9v93zykefvgg0z70shwgh4ap5tfv9rj0tglq039r50";
 
 fn generate_part_tx(alice: &mut TestWallet, myrole: ProtocolRole) -> anyhow::Result<Psbt> {
     // Alice pubkey for the seller multisig
@@ -55,7 +56,7 @@ fn generate_part_tx(alice: &mut TestWallet, myrole: ProtocolRole) -> anyhow::Res
     );
     builder.fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO calc real feerate
     let pbst = builder.finish()?;
-    dbg!(&pbst.unsigned_tx.output);
+    // dbg!(&pbst.unsigned_tx.output);
     Ok(pbst)
 }
 
@@ -129,6 +130,8 @@ fn transfer_sig_and_broadcast(
 ) -> anyhow::Result<Txid> {
     // I expect to find all sigs missing in psbt_alice to be in psbt_bob
     // also I expect that both psbts are the same exect for the sigs.
+    dbg!(&psbt_alice.unsigned_tx);
+    dbg!(&psbt_bob.unsigned_tx);
     assert!(psbt_alice.unsigned_tx == psbt_bob.unsigned_tx);
 
     for (i, alice_input) in psbt_alice.inputs.iter_mut().enumerate() {
