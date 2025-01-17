@@ -63,12 +63,14 @@ using security by identical generation
 fn test_musig_protocol() -> anyhow::Result<()> {
     println!("running...");
     check_start();
-    let alice_funds = funded_wallet();
-    let mut bob_funds = funded_wallet();
-    fund_wallet(&mut bob_funds);
+    let mut alice_funds = funded_wallet();
+    let bob_funds = funded_wallet();
+    fund_wallet(&mut alice_funds);
+    let seller_amount = &Amount::from_btc(1.4)?;
+    let buyer_amount = &Amount::from_btc(0.2)?;
 
-    let alice = &mut MusigProtocol::new(alice_funds, ProtocolRole::Seller)?;
-    let bob = &mut MusigProtocol::new(bob_funds, ProtocolRole::Buyer)?;
+    let alice = &mut MusigProtocol::new(alice_funds, ProtocolRole::Seller, seller_amount, buyer_amount)?;
+    let bob = &mut MusigProtocol::new(bob_funds, ProtocolRole::Buyer, seller_amount, buyer_amount)?;
 
     // Round 1
     let alice_psbt = &alice.generate_part_tx()?;
