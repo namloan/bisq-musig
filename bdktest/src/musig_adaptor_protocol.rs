@@ -2,12 +2,20 @@ use crate::{ProtocolRole, TestWallet, P_A_STRING, Q_A_STRING};
 use anyhow::anyhow;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::absolute::LockTime;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::{Address, Amount, FeeRate, Psbt, Sequence, Txid, Weight};
-use bdk_wallet::bitcoin::{PublicKey, ScriptBuf};
+use bdk_wallet::bitcoin::{KnownHrp, PublicKey, ScriptBuf};
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::{SignOptions, TxBuilder};
-use secp::Scalar;
+use musig2::KeyAggContext;
+use secp::{Point, Scalar};
+
+use bdk_wallet::bitcoin::key::Secp256k1;
+use bdk_wallet::miniscript::ToPublicKey;
 use std::str::FromStr;
 
+pub struct Round1Parameter {
+    p_a: Point,
+}
+pub struct Round2Parameter {}
 /**
 this context is for the whole process and need to be persisted by the caller
 */
@@ -18,20 +26,85 @@ pub struct BMPContext<'a> {
     seller_amount: &'a Amount,
     buyer_amount: &'a Amount,
     round: u8, // which round are we in.
-
+    //-----
+    p_tik: AggKey,
 }
 
 impl BMPContext<'_> {
     pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<BMPContext<'a>> {
         // let (p_sec, p_pubkey) = BMPContext::keyPair()?;
         // let (q_sec, q_pubkey) = BMPContext::keyPair()?;
-        Ok(BMPContext { funds, role, seller_amount, buyer_amount, round: 0 })
+        Ok(BMPContext { funds, role, seller_amount, buyer_amount, round: 0, p_tik: AggKey::new()? })
     }
-    // fn keyPair() -> anyhow::Result<(Scalar, PublicKey)> {
-    //     let sec: Scalar = Scalar::random(&mut rand::thread_rng()); // TODO is this random good enough?
-    //     let pubkey = PublicKey::from_slice(&*sec.base_point_mul().serialize())?;
-    //     Ok((sec, pubkey))
-    // }
+
+    pub(crate) fn round1(&mut self) -> anyhow::Result<Round1Parameter> {
+        self.check_round(1);
+
+        Ok(Round1Parameter { p_a: self.p_tik.get_point() })
+    }
+
+    pub(crate) fn round2(&mut self, par: Round1Parameter) -> anyhow::Result<Round2Parameter> {
+        self.check_round(2);
+
+        self.p_tik.aggregate_key(par.p_a)?;
+
+        Ok(Round2Parameter {})
+    }
+
+    fn check_round(&mut self, round: u8) {
+        if self.round != round - 1 {
+            panic!("round already done");
+        }
+        self.round = round;
+    }
+
+    // ------- Debug --------
+    pub(crate) fn get_p_tik_agg(self) -> Address {
+        self.p_tik.get_agg_adr().unwrap()
+    }
+}
+/**
+MuSig2 interaction, it represents the Key but only our side of the equation
+*/
+struct AggKey {
+    sec: Scalar,
+    other_sec: Option<Scalar>,
+    agg_sec: Option<Scalar>,
+    pub_point: Point,
+    other_point: Option<Point>,
+    agg_point: Option<Point>,
+}
+
+impl AggKey {
+    fn new() -> anyhow::Result<AggKey> {
+        let sec: Scalar = Scalar::random(&mut rand::thread_rng());
+        let point = sec.base_point_mul();
+        // let pubkey = PublicKey::from_slice(&*(point.serialize()))?;
+        Ok(AggKey { sec, other_sec: None, agg_sec: None, pub_point: point, other_point: None, agg_point: None })
+    }
+
+    fn get_point(&self) -> Point {
+        self.pub_point
+    }
+
+    fn aggregate_key(&mut self, point_from_bob: Point) -> anyhow::Result<Point> {
+        let pubkeys = if self.pub_point < point_from_bob {
+            [self.pub_point, point_from_bob]
+        } else {
+            [point_from_bob, self.pub_point]
+        };
+        let result = KeyAggContext::new(pubkeys)?.aggregated_pubkey();
+        self.agg_point = Some(result);
+        Ok(result)
+    }
+
+    // check https://bitcoin.stackexchange.com/questions/116384/what-are-the-steps-to-convert-a-private-key-to-a-taproot-address
+    fn get_agg_adr(self) -> anyhow::Result<Address> {
+        let pubkey = PublicKey::from_slice(&(self.agg_point.unwrap().serialize()))?.to_x_only_pubkey();
+        let secp = Secp256k1::new();
+        let adr = Address::p2tr(&secp, pubkey, None, KnownHrp::Regtest);
+        Ok(adr)
+    }
 }
 
 pub struct MusigProtocol<'a> {

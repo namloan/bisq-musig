@@ -56,23 +56,6 @@ electrs localhost:30000
 
  */
 
-struct Pro1Input {}
-struct Pro1Output {
-    // lists all item that needs serveral rounds
-    //DepositTx
-    //SwapTx
-    // adaptorSignature swaptx
-}
-struct ProtocolState {}
-impl ProtocolState {
-    fn new() -> Self {
-        Self {}
-    }
-    fn round1(pro1_input: Pro1Input) -> Pro1Output {
-        // let deposit_response1 = depositTx.round1(...) or let partTx : Pbst = depositTx.generate_Part_tx()
-        Pro1Output {}
-    }
-}
 /** run protocol as library
 using security by identical generation
 */
@@ -169,13 +152,13 @@ fn test_wallet() {
     // try to have a transaction with 2 inputs, from 2 parties
 }
 
-fn funded_wallet() -> TestWallet {
+pub(crate) fn funded_wallet() -> TestWallet {
     println!("loading wallet...");
     let mut wallet = TestWallet::new().unwrap();
     fund_wallet(&mut wallet);
     wallet
 }
-fn fund_wallet(wallet: &mut TestWallet) {
+pub(crate) fn fund_wallet(wallet: &mut TestWallet) {
     let initial_balance = wallet.balance();
     // load some more coin to wallet
     let adr = wallet.next_unused_address().to_string();
@@ -272,7 +255,7 @@ fn mine(address: &str, num_blocks: u16) -> Output {
 }
 
 #[test]
-fn check_start() {
+pub(crate) fn check_start() {
     // Step 2: Run 'nigiri start' to start Nigiri
     let nigiri_output = Command::new("nigiri").arg("start").output().unwrap();
 

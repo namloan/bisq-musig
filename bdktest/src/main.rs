@@ -1,6 +1,7 @@
 mod nigiri;
 mod musig_protocol;
 mod musig_adaptor_protocol;
+mod test_musig;
 
 use anyhow::anyhow;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::bip32::Xpriv;
