@@ -56,11 +56,28 @@ electrs localhost:30000
 
  */
 
+struct Pro1Input {}
+struct Pro1Output {
+    // lists all item that needs serveral rounds
+    //DepositTx
+    //SwapTx
+    // adaptorSignature swaptx
+}
+struct ProtocolState {}
+impl ProtocolState {
+    fn new() -> Self {
+        Self {}
+    }
+    fn round1(pro1_input: Pro1Input) -> Pro1Output {
+        // let deposit_response1 = depositTx.round1(...) or let partTx : Pbst = depositTx.generate_Part_tx()
+        Pro1Output {}
+    }
+}
 /** run protocol as library
 using security by identical generation
 */
 #[test]
-fn test_musig_protocol() -> anyhow::Result<()> {
+fn test_deposit_protocol() -> anyhow::Result<()> {
     println!("running...");
     check_start();
     let mut alice_funds = funded_wallet();
