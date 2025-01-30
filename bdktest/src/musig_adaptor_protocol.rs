@@ -12,10 +12,55 @@ use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::miniscript::ToPublicKey;
 use std::str::FromStr;
 
+/**
+This is not only testing code.
+It also shows how the Java FSM is supposed to call this library
+
+Of course the tests do not need to be replicated in Java. Nor the Nigiri code.
+*/
+#[test]
+fn test_musig() -> anyhow::Result<()> {
+    println!("running...");
+    crate::nigiri::check_start();
+    let mut alice_funds = TestWallet::new()?;
+    // crate::nigiri::funded_wallet();
+    let bob_funds = TestWallet::new()?; //crate::nigiri::funded_wallet();
+    // crate::nigiri::fund_wallet(&mut alice_funds);
+    let seller_amount = &Amount::from_btc(1.4)?;
+    let buyer_amount = &Amount::from_btc(0.2)?;
+
+    let mut alice = BMPContext::new(alice_funds, ProtocolRole::Seller, seller_amount, buyer_amount)?;
+    let mut bob = BMPContext::new(bob_funds, ProtocolRole::Buyer, seller_amount, buyer_amount)?;
+
+    // Round 1--------
+    let alice_response = alice.round1()?;
+    let bob_response = bob.round1()?;
+
+    // Round2 -------
+    let alice_r2 = alice.round2(bob_response)?;
+    let bob_r2 = bob.round2(alice_response)?;
+
+    println!("P2TR P' {}", alice.p_tik.get_agg_adr()?.to_string());
+    println!("P2TR Q' {}", alice.q_tik.get_agg_adr()?.to_string());
+
+    assert!(alice.get_p_tik_agg() == bob.get_p_tik_agg());
+    assert!(alice.q_tik.agg_point == bob.q_tik.agg_point);
+
+    // Round 3 ----------
+    // let alice_r3 = alice.round3(bob_r2)?;
+    // let bob_r3 = bob.round3(alice_r2)?;
+
+    Ok(())
+}
 pub struct Round1Parameter {
     p_a: Point,
+    q_a: Point,
 }
-pub struct Round2Parameter {}
+pub(crate) struct Round2Parameter {
+    pub p_agg: Point,
+    pub q_agg: Point,
+}
+pub(crate) struct Round3Parameter {}
 /**
 this context is for the whole process and need to be persisted by the caller
 */
@@ -27,26 +72,40 @@ pub struct BMPContext<'a> {
     buyer_amount: &'a Amount,
     round: u8, // which round are we in.
     //-----
-    p_tik: AggKey,
+    p_tik: AggKey, // Point securing Seller deposit and trade amount
+    q_tik: AggKey, // Point securing Buyer deposit
 }
 
 impl BMPContext<'_> {
     pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<BMPContext<'a>> {
-        Ok(BMPContext { funds, role, seller_amount, buyer_amount, round: 0, p_tik: AggKey::new()? })
+        Ok(BMPContext { funds, role, seller_amount, buyer_amount, round: 0, p_tik: AggKey::new()?, q_tik: AggKey::new()? })
     }
 
     pub(crate) fn round1(&mut self) -> anyhow::Result<Round1Parameter> {
         self.check_round(1);
 
-        Ok(Round1Parameter { p_a: self.p_tik.get_point() })
+        Ok(Round1Parameter {
+            p_a: self.p_tik.get_point(),
+            q_a: self.q_tik.get_point(),
+        })
     }
 
     pub(crate) fn round2(&mut self, par: Round1Parameter) -> anyhow::Result<Round2Parameter> {
         self.check_round(2);
+        assert_ne!(par.p_a, par.q_a, "Bob is sending the same point for P' and Q'.");
 
         self.p_tik.aggregate_key(par.p_a)?;
+        self.q_tik.aggregate_key(par.q_a)?;
+        // now we have the aggregated key
 
-        Ok(Round2Parameter {})
+
+        Ok(Round2Parameter {
+            p_agg: self.p_tik.agg_point.unwrap(),
+            q_agg: self.q_tik.agg_point.unwrap(),
+        })
+    }
+    pub(crate) fn round3(&mut self, par: Round2Parameter) -> anyhow::Result<Round3Parameter> {
+        Err(anyhow!("not implemented"))
     }
 
     fn check_round(&mut self, round: u8) {
@@ -65,6 +124,8 @@ impl BMPContext<'_> {
 /**
 MuSig2 interaction, it represents the Key but only our side of the equation
 */
+
+#[derive(PartialEq)]
 struct AggKey {
     sec: Scalar,
     other_sec: Option<Scalar>,
@@ -87,6 +148,7 @@ impl AggKey {
     }
 
     fn aggregate_key(&mut self, point_from_bob: Point) -> anyhow::Result<Point> {
+        assert_ne!(point_from_bob, self.pub_point, "Bob is sending my point back.");
         let pubkeys = if self.pub_point < point_from_bob {
             [self.pub_point, point_from_bob]
         } else {
