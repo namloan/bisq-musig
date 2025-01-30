@@ -60,15 +60,17 @@ electrs localhost:30000
 using security by identical generation
 */
 #[test]
-fn test_musig_protocol() -> anyhow::Result<()> {
+fn test_deposit_protocol() -> anyhow::Result<()> {
     println!("running...");
     check_start();
-    let alice_funds = funded_wallet();
-    let mut bob_funds = funded_wallet();
-    fund_wallet(&mut bob_funds);
+    let mut alice_funds = funded_wallet();
+    let bob_funds = funded_wallet();
+    fund_wallet(&mut alice_funds);
+    let seller_amount = &Amount::from_btc(1.4)?;
+    let buyer_amount = &Amount::from_btc(0.2)?;
 
-    let alice = &mut MusigProtocol::new(alice_funds, ProtocolRole::Seller)?;
-    let bob = &mut MusigProtocol::new(bob_funds, ProtocolRole::Buyer)?;
+    let alice = &mut MusigProtocol::new(alice_funds, ProtocolRole::Seller, seller_amount, buyer_amount)?;
+    let bob = &mut MusigProtocol::new(bob_funds, ProtocolRole::Buyer, seller_amount, buyer_amount)?;
 
     // Round 1
     let alice_psbt = &alice.generate_part_tx()?;
@@ -150,13 +152,13 @@ fn test_wallet() {
     // try to have a transaction with 2 inputs, from 2 parties
 }
 
-fn funded_wallet() -> TestWallet {
+pub(crate) fn funded_wallet() -> TestWallet {
     println!("loading wallet...");
     let mut wallet = TestWallet::new().unwrap();
     fund_wallet(&mut wallet);
     wallet
 }
-fn fund_wallet(wallet: &mut TestWallet) {
+pub(crate) fn fund_wallet(wallet: &mut TestWallet) {
     let initial_balance = wallet.balance();
     // load some more coin to wallet
     let adr = wallet.next_unused_address().to_string();
@@ -253,7 +255,7 @@ fn mine(address: &str, num_blocks: u16) -> Output {
 }
 
 #[test]
-fn check_start() {
+pub(crate) fn check_start() {
     // Step 2: Run 'nigiri start' to start Nigiri
     let nigiri_output = Command::new("nigiri").arg("start").output().unwrap();
 

@@ -66,38 +66,6 @@ impl M2a {
         // in real cases, the valid_signature will get to the other side through mempool or blockchain.
         other.reveal(valid_sig)
     }
-    pub(crate) fn sign_and_publish(&mut self) -> LiftedSignature {
-        // Decrypt the signature with the adaptor secret.
-        let valid_signature: LiftedSignature = self
-            .adaptor_signature
-            .unwrap()
-            .adapt(self.sec_adaptor.unwrap())
-            .unwrap();
-
-        musig2::verify_single(
-            self.aggregated_pubkey.unwrap(),
-            valid_signature,
-            &self.message.clone().unwrap(),
-        )
-        .expect("invalid decrypted adaptor signature");
-        valid_signature
-    }
-
-    pub(crate) fn agree_on_message(&mut self, msg: &str) {
-        self.message = Some(msg.to_string());
-        let mut seed = [0u8; 32];
-        rand::thread_rng().fill(&mut seed);
-
-        let nonce = SecNonce::generate(
-            // &mut rand::rngs::OsRng,
-            seed,
-            self.sec_key,
-            self.aggregated_pubkey.unwrap(),
-            &self.message.clone().unwrap(),
-            "12345",
-        );
-        self.sec_nonce = Option::from(nonce);
-    }
 
     fn new() -> M2a {
         let k = Scalar::random(&mut rand::thread_rng());
@@ -135,6 +103,28 @@ impl M2a {
         self.pub_key
     }
 
+    pub(crate) fn agree_on_message(&mut self, msg: &str) {
+        self.message = Some(msg.to_string());
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill(&mut seed);
+
+        let nonce = SecNonce::generate(
+            // &mut rand::rngs::OsRng,
+            seed,
+            self.sec_key,
+            self.aggregated_pubkey.unwrap(),
+            &self.message.clone().unwrap(),
+            "12345",
+        );
+        self.sec_nonce = Option::from(nonce);
+    }
+
+    fn exchange_nonce(&mut self, othernonce: PubNonce) -> PubNonce {
+        let mynonce = self.sec_nonce.clone().unwrap().public_nonce();
+        self.agg_nonce = Some(AggNonce::sum([mynonce.clone(), othernonce]));
+        mynonce
+    }
+
     fn adapted_part_sign(&self) -> PartialSignature {
         musig2::adaptor::sign_partial(
             &self.ctx.clone().unwrap(),
@@ -144,13 +134,7 @@ impl M2a {
             self.pub_adaptor.unwrap(),
             &self.message.clone().unwrap(),
         )
-        .expect("Signing partial signature failed.")
-    }
-
-    fn exchange_nonce(&mut self, othernonce: PubNonce) -> PubNonce {
-        let mynonce = self.sec_nonce.clone().unwrap().public_nonce();
-        self.agg_nonce = Some(AggNonce::sum([mynonce.clone(), othernonce]));
-        mynonce
+            .expect("Signing partial signature failed.")
     }
 
     fn exchange_part_sig(&mut self, othersig: PartialSignature) -> PartialSignature {
@@ -163,7 +147,7 @@ impl M2a {
             [othersig, mysig],
             &self.message.clone().unwrap(),
         )
-        .expect("failed to aggregate partial adaptor signatures");
+            .expect("failed to aggregate partial adaptor signatures");
         self.adaptor_signature = Some(adaptor_signature);
 
         // Verify the adaptor signature is valid for the given adaptor point and pubkey.
@@ -173,8 +157,25 @@ impl M2a {
             &self.message.clone().unwrap(),
             self.pub_adaptor.clone().unwrap(),
         )
-        .expect("invalid aggregated adaptor signature");
+            .expect("invalid aggregated adaptor signature");
         mysig // return mysig only if all is ok, otherwise Alice may have scamed me.
+    }
+
+    pub(crate) fn sign_and_publish(&mut self) -> LiftedSignature {
+        // Decrypt the signature with the adaptor secret.
+        let valid_signature: LiftedSignature = self
+            .adaptor_signature
+            .unwrap()
+            .adapt(self.sec_adaptor.unwrap())
+            .unwrap();
+
+        musig2::verify_single(
+            self.aggregated_pubkey.unwrap(),
+            valid_signature,
+            &self.message.clone().unwrap(),
+        )
+            .expect("invalid decrypted adaptor signature");
+        valid_signature
     }
 
     fn reveal(&mut self, valid_sig: LiftedSignature) -> Scalar {

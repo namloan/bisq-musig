@@ -1,38 +1,41 @@
-use crate::{ProtocolRole, TestWallet, AMOUNT_BUYER, AMOUNT_SELLER, P_A_STRING, Q_A_STRING};
+use crate::{ProtocolRole, TestWallet, P_A_STRING, Q_A_STRING};
 use anyhow::anyhow;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::absolute::LockTime;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::{Address, Amount, FeeRate, Psbt, Sequence, Txid, Weight};
+use bdk_wallet::bitcoin::ScriptBuf;
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::{SignOptions, TxBuilder};
 use std::str::FromStr;
 
-pub struct MusigProtocol {
+pub struct MusigProtocol<'a> {
     funds: TestWallet,
     role: ProtocolRole,
     // Alice pubkey for the seller multisig
     p_pub: Address,
     // Alice pubkey for the buyer multisig
     q_pub: Address,
+    seller_amount: &'a Amount,
+    buyer_amount: &'a Amount,
 }
 
-impl MusigProtocol {
-    pub(crate) fn new(funds: TestWallet, role: ProtocolRole) -> anyhow::Result<MusigProtocol> {
+impl MusigProtocol<'_> {
+    pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<MusigProtocol<'a>> {
         let p_pub = Address::from_str(P_A_STRING)?.assume_checked(); // TODO replace by ephemeral key generating Point
         let q_pub = Address::from_str(Q_A_STRING)?.assume_checked();
-        Ok(MusigProtocol { funds, role, p_pub, q_pub })
+        Ok(MusigProtocol { funds, role, p_pub, q_pub, seller_amount, buyer_amount })
     }
 
     pub(crate) fn generate_part_tx(&mut self) -> anyhow::Result<Psbt> {
         let (funded_by_me, amount) = match self.role {
-            ProtocolRole::Seller => (&self.p_pub, AMOUNT_SELLER),
-            ProtocolRole::Buyer => (&self.q_pub, AMOUNT_BUYER),
+            ProtocolRole::Seller => (&self.p_pub, self.seller_amount),
+            ProtocolRole::Buyer => (&self.q_pub, self.buyer_amount),
         };
         // create and fund a (virtual) transaction which funds Alice part of the Deposit Tx
         let mut builder = self.funds.wallet.build_tx();
         builder.add_recipient(
-            funded_by_me.script_pubkey(), Amount::from_btc(amount)?,
+            funded_by_me.script_pubkey(), *amount,
         );
-        builder.fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO calc real feerate
+        builder.fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO feerates shall come from pricenodes
         let pbst = builder.finish()?;
         // dbg!(&pbst.unsigned_tx.output);
         Ok(pbst)
@@ -44,10 +47,7 @@ impl MusigProtocol {
             let scriptbuf = pbst_input.clone().witness_utxo.unwrap().script_pubkey;
             if self.funds.wallet.is_mine(scriptbuf.clone()) {
                 // bob is trying to trick me.
-                panic!(
-                    "Fraud detected. Bob send me my own scriptbuf {:?}",
-                    scriptbuf
-                )
+                panic!("Fraud detected. Bob send me my own scriptbuf {:?}", scriptbuf)
             }
         }
         // TODO sanity check if bobs transaction actually calculate the fee correctly, otherwise he could save on fess at the expense of alice
@@ -59,18 +59,17 @@ impl MusigProtocol {
         // keep track of the fees, as total fees is not equal to sum of fess from alice and bob psbts.
         let mut total: i64 = 0; // measured in sats
         // add deposit outputs first.
-        let seller_amount = Amount::from_btc(AMOUNT_SELLER)?;
-        builder.add_recipient(self.p_pub.script_pubkey(), seller_amount);
-        total = total - seller_amount.to_sat() as i64;
+        builder.add_recipient(self.p_pub.script_pubkey(), *self.seller_amount);
+        total = total - self.seller_amount.to_sat() as i64;
 
-        let buyer_amount = Amount::from_btc(AMOUNT_BUYER)?;
-        builder.add_recipient(self.q_pub.script_pubkey(), buyer_amount); // TODO make amounts variable
-        total = total - buyer_amount.to_sat() as i64;
+        builder.add_recipient(self.q_pub.script_pubkey(), *self.buyer_amount); // TODO make amounts variable
+        total = total - self.buyer_amount.to_sat() as i64;
 
-        total = builder.merge(my_psbt, false, total)?;
-        total = builder.merge(other_psbt, true, total)?;
+        let disregard_scripts = &[self.p_pub.script_pubkey(), self.q_pub.script_pubkey()];
+        total = builder.merge(my_psbt, false, total, disregard_scripts)?;
+        total = builder.merge(other_psbt, true, total, disregard_scripts)?;
 
-        builder.fee_absolute(Amount::from_sat(total as u64)); // TODO calc real feerate
+        builder.fee_absolute(Amount::from_sat(total as u64));
         builder.nlocktime(LockTime::ZERO); // TODO RBF disabled anyway, so this value can be disregarded.
 
         // Attempt to finish and return the merged PSBT
@@ -137,15 +136,11 @@ fn sort(psbt: &mut Psbt) {
 }
 
 trait Merge {
-    fn merge(&mut self, psbt: &Psbt, foreign: bool, total: i64) -> anyhow::Result<i64>;
+    fn merge(&mut self, psbt: &Psbt, foreign: bool, total: i64, disregard_scripts: &[ScriptBuf]) -> anyhow::Result<i64>;
 }
 
 impl Merge for TxBuilder<'_, BranchAndBoundCoinSelection> {
-    fn merge(&mut self, psbt: &Psbt, foreign: bool, mut total: i64) -> anyhow::Result<i64> {
-        let p_script = Address::from_str(P_A_STRING)?.assume_checked().script_pubkey();
-        let q_script = Address::from_str(Q_A_STRING)?.assume_checked().script_pubkey();
-
-        let disregard_scripts = vec![p_script, q_script];
+    fn merge(&mut self, psbt: &Psbt, foreign: bool, mut total: i64, disregard_scripts: &[ScriptBuf]) -> anyhow::Result<i64> {
         for (index, psbt_input) in psbt.inputs.iter().enumerate() {
             let op = psbt.unsigned_tx.input[index].previous_output; // yes, you are seeing right, index in tx and psbt_input must match
             if foreign {
