@@ -25,7 +25,7 @@ fn test_musig() -> anyhow::Result<()> {
     println!("{}", alice.get_p_tik_agg().to_string());
     // println!("P2TR Addres {}", alice.get_p_tik_agg());
 
-    // assert!(alice.get_p_tik_agg() == bob.get_p_tik_agg());
+    assert!(alice.get_p_tik_agg() == bob.get_p_tik_agg());
 
     Ok(())
 }

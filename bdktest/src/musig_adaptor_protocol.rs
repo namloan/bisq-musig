@@ -32,8 +32,6 @@ pub struct BMPContext<'a> {
 
 impl BMPContext<'_> {
     pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<BMPContext<'a>> {
-        // let (p_sec, p_pubkey) = BMPContext::keyPair()?;
-        // let (q_sec, q_pubkey) = BMPContext::keyPair()?;
         Ok(BMPContext { funds, role, seller_amount, buyer_amount, round: 0, p_tik: AggKey::new()? })
     }
 
@@ -59,8 +57,9 @@ impl BMPContext<'_> {
     }
 
     // ------- Debug --------
-    pub(crate) fn get_p_tik_agg(self) -> Address {
-        self.p_tik.get_agg_adr().unwrap()
+    pub(crate) fn get_p_tik_agg(&self) -> Address {
+        let r = &(*self).p_tik;
+        r.get_agg_adr().unwrap()
     }
 }
 /**
@@ -99,7 +98,7 @@ impl AggKey {
     }
 
     // check https://bitcoin.stackexchange.com/questions/116384/what-are-the-steps-to-convert-a-private-key-to-a-taproot-address
-    fn get_agg_adr(self) -> anyhow::Result<Address> {
+    fn get_agg_adr(&self) -> anyhow::Result<Address> {
         let pubkey = PublicKey::from_slice(&(self.agg_point.unwrap().serialize()))?.to_x_only_pubkey();
         let secp = Secp256k1::new();
         let adr = Address::p2tr(&secp, pubkey, None, KnownHrp::Regtest);
