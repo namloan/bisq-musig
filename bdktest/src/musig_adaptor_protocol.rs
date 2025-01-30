@@ -1,5 +1,4 @@
-use crate::{ProtocolRole, TestWallet, P_A_STRING, Q_A_STRING};
-use anyhow::anyhow;
+use crate::{ProtocolRole, TestWallet};
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::absolute::LockTime;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::{Address, Amount, FeeRate, Psbt, Sequence, Txid, Weight};
 use bdk_wallet::bitcoin::{KnownHrp, PublicKey, ScriptBuf};
@@ -8,9 +7,9 @@ use bdk_wallet::{SignOptions, TxBuilder};
 use musig2::KeyAggContext;
 use secp::{Point, Scalar};
 
+use bdk_core::bitcoin::Transaction;
 use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::miniscript::ToPublicKey;
-use std::str::FromStr;
 
 /**
 This is not only testing code.
@@ -22,15 +21,19 @@ Of course the tests do not need to be replicated in Java. Nor the Nigiri code.
 fn test_musig() -> anyhow::Result<()> {
     println!("running...");
     crate::nigiri::check_start();
-    let mut alice_funds = TestWallet::new()?;
-    // crate::nigiri::funded_wallet();
-    let bob_funds = TestWallet::new()?; //crate::nigiri::funded_wallet();
-    // crate::nigiri::fund_wallet(&mut alice_funds);
+    let mut alice_funds = crate::nigiri::funded_wallet();
+    //TestWallet::new()?;
+
+    let bob_funds = crate::nigiri::funded_wallet();
+    //TestWallet::new()?;
+    crate::nigiri::fund_wallet(&mut alice_funds);
     let seller_amount = &Amount::from_btc(1.4)?;
     let buyer_amount = &Amount::from_btc(0.2)?;
+    let alice_context = BMPContext::new(alice_funds, ProtocolRole::Seller, seller_amount.clone(), buyer_amount.clone())?;
 
-    let mut alice = BMPContext::new(alice_funds, ProtocolRole::Seller, seller_amount, buyer_amount)?;
-    let mut bob = BMPContext::new(bob_funds, ProtocolRole::Buyer, seller_amount, buyer_amount)?;
+    let mut alice = BMPProtocol::new(alice_context)?;
+    let bob_context = BMPContext::new(bob_funds, ProtocolRole::Buyer, seller_amount.clone(), buyer_amount.clone())?;
+    let mut bob = BMPProtocol::new(bob_context)?;
 
     // Round 1--------
     let alice_response = alice.round1()?;
@@ -47,77 +50,104 @@ fn test_musig() -> anyhow::Result<()> {
     assert!(alice.q_tik.agg_point == bob.q_tik.agg_point);
 
     // Round 3 ----------
-    // let alice_r3 = alice.round3(bob_r2)?;
-    // let bob_r3 = bob.round3(alice_r2)?;
+    let alice_r3 = alice.round3(bob_r2)?;
+    let bob_r3 = bob.round3(alice_r2)?;
 
+    assert_eq!(alice_r3.deposit_txid, bob_r3.deposit_txid);
+    dbg!(&alice_r3.deposit_txid);
     Ok(())
 }
 pub struct Round1Parameter {
     p_a: Point,
     q_a: Point,
+    dep_part_psbt: Psbt,
 }
 pub(crate) struct Round2Parameter {
-    pub p_agg: Point,
-    pub q_agg: Point,
+    p_agg: Point,
+    q_agg: Point,
+    deposit_tx_signed: Psbt,
 }
-pub(crate) struct Round3Parameter {}
+pub(crate) struct Round3Parameter {
+    deposit_txid: Txid,
+}
 /**
 this context is for the whole process and need to be persisted by the caller
 */
-pub struct BMPContext<'a> {
+pub struct BMPContext {
     // first of all, everything which is general to the protcol itself
     funds: TestWallet,
     role: ProtocolRole,
-    seller_amount: &'a Amount,
-    buyer_amount: &'a Amount,
-    round: u8, // which round are we in.
-    //-----
+    seller_amount: Amount,
+    buyer_amount: Amount,
+}
+pub struct BMPProtocol {
+    ctx: BMPContext,
     p_tik: AggKey, // Point securing Seller deposit and trade amount
     q_tik: AggKey, // Point securing Buyer deposit
     deposit_tx: DepositTx,
+    round: u8, // which round are we in.
 }
 
-impl BMPContext<'_> {
-    pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<BMPContext<'a>> {
+impl BMPContext {
+    pub(crate) fn new(funds: TestWallet, role: ProtocolRole, seller_amount: Amount, buyer_amount: Amount) -> anyhow::Result<BMPContext> {
         Ok(BMPContext {
             funds,
             role,
             seller_amount,
             buyer_amount,
-            round: 0,
+        })
+    }
+}
+impl BMPProtocol {
+    pub(crate) fn new(ctx: BMPContext) -> anyhow::Result<BMPProtocol> {
+        Ok(BMPProtocol {
+            ctx,
             p_tik: AggKey::new()?,
             q_tik: AggKey::new()?,
             deposit_tx: DepositTx::new(),
+            round: 0,
         })
     }
 
     pub(crate) fn round1(&mut self) -> anyhow::Result<Round1Parameter> {
         self.check_round(1);
 
-        let dep_part_psbt = self.deposit_tx.generate_part_tx(self)?;
+        let dep_part_psbt = self.deposit_tx.generate_part_tx(&mut self.ctx, &self.p_tik.pub_point, &self.q_tik.pub_point)?;
         Ok(Round1Parameter {
-            p_a: self.p_tik.get_point(),
-            q_a: self.q_tik.get_point(),
+            p_a: self.p_tik.pub_point,
+            q_a: self.q_tik.pub_point,
             dep_part_psbt,
         })
     }
 
-    pub(crate) fn round2(&mut self, par: Round1Parameter) -> anyhow::Result<Round2Parameter> {
+    pub(crate) fn round2(&mut self, bob: Round1Parameter) -> anyhow::Result<Round2Parameter> {
         self.check_round(2);
-        assert_ne!(par.p_a, par.q_a, "Bob is sending the same point for P' and Q'.");
+        assert_ne!(bob.p_a, bob.q_a, "Bob is sending the same point for P' and Q'.");
 
-        self.p_tik.aggregate_key(par.p_a)?;
-        self.q_tik.aggregate_key(par.q_a)?;
+        // save bobs parameters
+        self.p_tik.other_point = Some(bob.p_a);
+        self.q_tik.other_point = Some(bob.q_a);
+        self.p_tik.aggregate_key(bob.p_a)?;
+        self.q_tik.aggregate_key(bob.q_a)?;
         // now we have the aggregated key
-
+        // so we can contruct the Deposit Tx
+        let depopit_tx_signed = self.deposit_tx.build_and_merge_tx(&mut self.ctx, &bob.dep_part_psbt, &self.p_tik, &self.q_tik)?;
 
         Ok(Round2Parameter {
             p_agg: self.p_tik.agg_point.unwrap(),
             q_agg: self.q_tik.agg_point.unwrap(),
+            deposit_tx_signed: depopit_tx_signed,
         })
     }
-    pub(crate) fn round3(&mut self, par: Round2Parameter) -> anyhow::Result<Round3Parameter> {
-        Err(anyhow!("not implemented"))
+    pub(crate) fn round3(&mut self, bob: Round2Parameter) -> anyhow::Result<Round3Parameter> {
+        self.check_round(3);
+        // actually this next test is not necessary, but double-checking and fast fail is always good
+        // TODO since we are sending this only to validate, we could use a hash of it as well, optimization
+        assert_eq!(bob.p_agg, self.p_tik.agg_point.unwrap(), "Bob is sending the wrong P' for his aggregated key.");
+        assert_eq!(bob.q_agg, self.q_tik.agg_point.unwrap(), "Bob is sending the wrong Q' for his aggregated key.");
+
+        let txid = self.deposit_tx.transfer_sig_and_broadcast(&mut self.ctx, bob.deposit_tx_signed)?;
+        Ok(Round3Parameter { deposit_txid: txid })
     }
 
     fn check_round(&mut self, round: u8) {
@@ -136,6 +166,8 @@ impl BMPContext<'_> {
 
 struct DepositTx {
     part_psbt: Option<Psbt>,
+    signed_psbt: Option<Psbt>,
+    tx: Option<Transaction>,
 }
 
 
@@ -143,31 +175,34 @@ impl DepositTx {
     fn new() -> DepositTx {
         DepositTx {
             part_psbt: None,
+            signed_psbt: None,
+            tx: None,
         }
     }
 
-    pub fn generate_part_tx(&mut self, ctx: &mut BMPContext) -> anyhow::Result<Psbt> {
+    pub fn generate_part_tx(&mut self, ctx: &mut BMPContext, p_a: &Point, q_a: &Point) -> anyhow::Result<Psbt> {
         // we are using our point as receipient address, but it will be changed to the musig address later.
         let (funded_by_me, amount) = match ctx.role {
-            ProtocolRole::Seller => (&ctx.p_tik.pub_point, ctx.seller_amount), // pub
-            ProtocolRole::Buyer => (&ctx.q_tik.pub_point, ctx.buyer_amount),
+            ProtocolRole::Seller => (p_a, ctx.seller_amount), // pub
+            ProtocolRole::Buyer => (q_a, ctx.buyer_amount),
         };
         // create and fund a (virtual) transaction which funds Alice part of the Deposit Tx
         let mut builder = ctx.funds.wallet.build_tx();
         builder.add_recipient(
-            funded_by_me.key_spend_no_merkle_address()?.script_pubkey(), *amount,
+            funded_by_me.key_spend_no_merkle_address()?.script_pubkey(), amount,
         );
         builder.fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO feerates shall come from pricenodes
         let pbst = builder.finish()?;
+        self.part_psbt = Some(pbst.clone());
         // dbg!(&pbst.unsigned_tx.output);
         Ok(pbst)
     }
 
-    pub fn build_and_merge_tx(&mut self, ctx: &mut BMPContext, other_psbt: &Psbt) -> anyhow::Result<Psbt> {
+    pub fn build_and_merge_tx(&mut self, ctx: &mut BMPContext, other_psbt: &Psbt, p_tik: &AggKey, q_tik: &AggKey) -> anyhow::Result<Psbt> {
         let my_psbt = self.part_psbt.as_ref().unwrap();
         //sanity check that Bob doesn't send UTXOs owned by alice.
         for pbst_input in other_psbt.inputs.iter() {
-            let scriptbuf = pbst_input.clone().witness_utxo.unwrap().script_pubkey;
+            let scriptbuf = pbst_input.witness_utxo.clone().unwrap().script_pubkey;
             if ctx.funds.wallet.is_mine(scriptbuf.clone()) {
                 // bob is trying to trick me.
                 panic!("Fraud detected. Bob send me my own scriptbuf {:?}", scriptbuf)
@@ -182,24 +217,24 @@ impl DepositTx {
         // keep track of the fees, as total fees is not equal to sum of fess from alice and bob psbts.
         let mut total: i64 = 0; // measured in sats
         // add deposit outputs first.
-        let p_tik_adr = ctx.p_tik.get_agg_adr()?;
-        builder.add_recipient(p_tik_adr.script_pubkey(), *ctx.seller_amount);
+        let p_tik_adr = p_tik.get_agg_adr()?;
+        builder.add_recipient(p_tik_adr.script_pubkey(), ctx.seller_amount);
         total = total - ctx.seller_amount.to_sat() as i64;
 
-        let q_tik_adr = ctx.q_tik.get_agg_adr()?;
-        builder.add_recipient(q_tik_adr.script_pubkey(), *ctx.buyer_amount);
+        let q_tik_adr = q_tik.get_agg_adr()?;
+        builder.add_recipient(q_tik_adr.script_pubkey(), ctx.buyer_amount);
         total = total - ctx.buyer_amount.to_sat() as i64;
 
         // in the following merge, we want to copy the funding inputs and the change outputs
         // so we disregard basically all known scripts.
         // technically, only the script created in the 'generate_part_tx()' should appear
         let disregard_scripts = &[
-            ctx.p_tik.pub_point.key_spend_no_merkle_address()?.script_pubkey(),
-            ctx.q_tik.pub_point.key_spend_no_merkle_address()?.script_pubkey(),
-            ctx.p_tik.other_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
-            ctx.q_tik.other_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
-            ctx.p_tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(), // technically these 2 script should not appear
-            ctx.q_tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(), // but dont let the other side so some fancy stuff
+            p_tik.pub_point.key_spend_no_merkle_address()?.script_pubkey(),
+            q_tik.pub_point.key_spend_no_merkle_address()?.script_pubkey(),
+            p_tik.other_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
+            q_tik.other_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
+            p_tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(), // technically these 2 script should not appear
+            q_tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(), // but don't let the other side do some fancy stuff
         ];
         total = builder.merge(my_psbt, false, total, disregard_scripts)?;
         total = builder.merge(other_psbt, true, total, disregard_scripts)?;
@@ -217,7 +252,34 @@ impl DepositTx {
 
         // sign my psbt
         ctx.funds.wallet.sign(&mut merged_psbt, SignOptions::default())?;
+        self.signed_psbt = Some(merged_psbt.clone());
+        self.part_psbt = None; // make sure not reused.
         Ok(merged_psbt)
+    }
+
+    fn transfer_sig_and_broadcast(&mut self, ctx: &mut BMPContext,
+                                  psbt_bob: Psbt,   // bobs psbt should be same as mine but have bob's sig
+    ) -> anyhow::Result<Txid> {
+        // I expect to find all sigs missing in psbt_alice to be in psbt_bob
+        // also I expect that both psbts are the same exect for the sigs.
+        let mut my_psbt = self.signed_psbt.as_ref().unwrap().clone();
+
+        dbg!(&my_psbt.unsigned_tx);
+        dbg!(&psbt_bob.unsigned_tx);
+        assert!(my_psbt.unsigned_tx == psbt_bob.unsigned_tx);
+
+        for (i, alice_input) in my_psbt.inputs.iter_mut().enumerate() {
+            if alice_input.final_script_witness.is_none() {
+                alice_input.final_script_witness =
+                    Some(psbt_bob.inputs[i].final_script_witness.clone().unwrap()); //must exist
+            }
+        }
+        let tx = my_psbt.extract_tx()?;
+        self.tx = Some(tx.clone());
+        self.signed_psbt = None; // remove used data
+        // TODO alice and bob will broadcast, is that a bug or a feature?
+        ctx.funds.client.transaction_broadcast(&tx)?;
+        Ok(tx.compute_txid())
     }
 }
 /**
@@ -240,10 +302,6 @@ impl AggKey {
         let point = sec.base_point_mul();
         // let pubkey = PublicKey::from_slice(&*(point.serialize()))?;
         Ok(AggKey { sec, other_sec: None, agg_sec: None, pub_point: point, other_point: None, agg_point: None })
-    }
-
-    fn get_point(&self) -> Point {
-        self.pub_point
     }
 
     fn aggregate_key(&mut self, point_from_bob: Point) -> anyhow::Result<Point> {
@@ -272,107 +330,6 @@ impl PointExt for Point {
         let secp = Secp256k1::new(); // TODO make it static?
         let adr = Address::p2tr(&secp, pubkey, None, KnownHrp::Regtest);
         Ok(adr)
-    }
-}
-pub struct MusigProtocol<'a> {
-    funds: TestWallet,
-    role: ProtocolRole,
-    // Alice pubkey for the seller multisig
-    p_pub: Address,
-    // Alice pubkey for the buyer multisig
-    q_pub: Address,
-    seller_amount: &'a Amount,
-    buyer_amount: &'a Amount,
-}
-
-impl MusigProtocol<'_> {
-    pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<MusigProtocol<'a>> {
-        let p_pub = Address::from_str(P_A_STRING)?.assume_checked(); // TODO replace by ephemeral key generating Point
-        let q_pub = Address::from_str(Q_A_STRING)?.assume_checked();
-        Ok(MusigProtocol { funds, role, p_pub, q_pub, seller_amount, buyer_amount })
-    }
-
-    pub(crate) fn generate_part_tx(&mut self) -> anyhow::Result<Psbt> {
-        let (funded_by_me, amount) = match self.role {
-            ProtocolRole::Seller => (&self.p_pub, self.seller_amount),
-            ProtocolRole::Buyer => (&self.q_pub, self.buyer_amount),
-        };
-        // create and fund a (virtual) transaction which funds Alice part of the Deposit Tx
-        let mut builder = self.funds.wallet.build_tx();
-        builder.add_recipient(
-            funded_by_me.script_pubkey(), *amount,
-        );
-        builder.fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO feerates shall come from pricenodes
-        let pbst = builder.finish()?;
-        // dbg!(&pbst.unsigned_tx.output);
-        Ok(pbst)
-    }
-
-    pub(crate) fn build_and_merge_tx(&mut self, my_psbt: &Psbt, other_psbt: &Psbt) -> anyhow::Result<Psbt> {
-        //sanity check that Bob doesn't send UTXOs owned by alice.
-        for pbst_input in other_psbt.inputs.iter() {
-            let scriptbuf = pbst_input.clone().witness_utxo.unwrap().script_pubkey;
-            if self.funds.wallet.is_mine(scriptbuf.clone()) {
-                // bob is trying to trick me.
-                panic!("Fraud detected. Bob send me my own scriptbuf {:?}", scriptbuf)
-            }
-        }
-        // TODO sanity check if bobs transaction actually calculate the fee correctly, otherwise he could save on fess at the expense of alice
-
-        // recreate combined ty from scratch
-        let mut builder = self.funds.wallet.build_tx();
-        builder.manually_selected_only(); // only use inputs we have already identified.
-        builder.set_exact_sequence(Sequence::MAX); // no RBF, RBF disabled for foreign utxos anyway.
-        // keep track of the fees, as total fees is not equal to sum of fess from alice and bob psbts.
-        let mut total: i64 = 0; // measured in sats
-        // add deposit outputs first.
-        builder.add_recipient(self.p_pub.script_pubkey(), *self.seller_amount);
-        total = total - self.seller_amount.to_sat() as i64;
-
-        builder.add_recipient(self.q_pub.script_pubkey(), *self.buyer_amount); // TODO make amounts variable
-        total = total - self.buyer_amount.to_sat() as i64;
-
-        let disregard_scripts = &[self.p_pub.script_pubkey(), self.q_pub.script_pubkey()];
-        total = builder.merge(my_psbt, false, total, disregard_scripts)?;
-        total = builder.merge(other_psbt, true, total, disregard_scripts)?;
-
-        builder.fee_absolute(Amount::from_sat(total as u64));
-        builder.nlocktime(LockTime::ZERO); // TODO RBF disabled anyway, so this value can be disregarded.
-
-        // Attempt to finish and return the merged PSBT
-        let mut merged_psbt = builder
-            .finish()
-            .map_err(|e| anyhow!("Failed to build transaction: {:?}", e))?;
-
-        // We need to sort the order of inputs and output to make the TXid of alice nd bod equal
-        // TODO come up with a randomized sort to preserve privacy
-        // TODO use builder.ordering() with custom alg.
-        sort(&mut merged_psbt);
-
-        // sign my psbt
-        self.funds.wallet.sign(&mut merged_psbt, SignOptions::default())?;
-        Ok(merged_psbt)
-    }
-
-    // bobs psbt should be same as mine but have bob's sig
-    pub(crate) fn transfer_sig_and_broadcast(&mut self, my_psbt: &Psbt, other_psbt: &Psbt) -> anyhow::Result<Txid> {
-        let mut my_psbt = my_psbt.clone();
-        // I expect to find all sigs missing in psbt_alice to be in psbt_bob
-        // also I expect that both psbts are the same exect for the sigs.
-        dbg!(&my_psbt.unsigned_tx);
-        dbg!(&other_psbt.unsigned_tx);
-        assert!(my_psbt.unsigned_tx == other_psbt.unsigned_tx);
-
-        for (i, alice_input) in my_psbt.inputs.iter_mut().enumerate() {
-            if alice_input.final_script_witness.is_none() {
-                alice_input.final_script_witness =
-                    Some(other_psbt.inputs[i].final_script_witness.clone().unwrap()); //must exist
-            }
-        }
-        let tx = my_psbt.extract_tx()?;
-        // TODO both, alice and bob will broadcast, is that a bug or a feature?
-        self.funds.client.transaction_broadcast(&tx)?;
-        Ok(tx.compute_txid())
     }
 }
 
@@ -430,10 +387,4 @@ impl Merge for TxBuilder<'_, BranchAndBoundCoinSelection> {
         }
         Ok(total)
     }
-}
-
-struct MusigAdaptor {
-    sec: Scalar,
-    pubkey: PublicKey,
-    address: Address,
 }
