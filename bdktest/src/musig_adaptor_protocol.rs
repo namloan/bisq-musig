@@ -74,19 +74,31 @@ pub struct BMPContext<'a> {
     //-----
     p_tik: AggKey, // Point securing Seller deposit and trade amount
     q_tik: AggKey, // Point securing Buyer deposit
+    deposit_tx: DepositTx,
 }
 
 impl BMPContext<'_> {
     pub(crate) fn new<'a>(funds: TestWallet, role: ProtocolRole, seller_amount: &'a Amount, buyer_amount: &'a Amount) -> anyhow::Result<BMPContext<'a>> {
-        Ok(BMPContext { funds, role, seller_amount, buyer_amount, round: 0, p_tik: AggKey::new()?, q_tik: AggKey::new()? })
+        Ok(BMPContext {
+            funds,
+            role,
+            seller_amount,
+            buyer_amount,
+            round: 0,
+            p_tik: AggKey::new()?,
+            q_tik: AggKey::new()?,
+            deposit_tx: DepositTx::new(),
+        })
     }
 
     pub(crate) fn round1(&mut self) -> anyhow::Result<Round1Parameter> {
         self.check_round(1);
 
+        let dep_part_psbt = self.deposit_tx.generate_part_tx(self)?;
         Ok(Round1Parameter {
             p_a: self.p_tik.get_point(),
             q_a: self.q_tik.get_point(),
+            dep_part_psbt,
         })
     }
 
@@ -119,6 +131,93 @@ impl BMPContext<'_> {
     pub(crate) fn get_p_tik_agg(&self) -> Address {
         let r = &(*self).p_tik;
         r.get_agg_adr().unwrap()
+    }
+}
+
+struct DepositTx {
+    part_psbt: Option<Psbt>,
+}
+
+
+impl DepositTx {
+    fn new() -> DepositTx {
+        DepositTx {
+            part_psbt: None,
+        }
+    }
+
+    pub fn generate_part_tx(&mut self, ctx: &mut BMPContext) -> anyhow::Result<Psbt> {
+        // we are using our point as receipient address, but it will be changed to the musig address later.
+        let (funded_by_me, amount) = match ctx.role {
+            ProtocolRole::Seller => (&ctx.p_tik.pub_point, ctx.seller_amount), // pub
+            ProtocolRole::Buyer => (&ctx.q_tik.pub_point, ctx.buyer_amount),
+        };
+        // create and fund a (virtual) transaction which funds Alice part of the Deposit Tx
+        let mut builder = ctx.funds.wallet.build_tx();
+        builder.add_recipient(
+            funded_by_me.key_spend_no_merkle_address()?.script_pubkey(), *amount,
+        );
+        builder.fee_rate(FeeRate::from_sat_per_vb(20).unwrap()); // TODO feerates shall come from pricenodes
+        let pbst = builder.finish()?;
+        // dbg!(&pbst.unsigned_tx.output);
+        Ok(pbst)
+    }
+
+    pub fn build_and_merge_tx(&mut self, ctx: &mut BMPContext, other_psbt: &Psbt) -> anyhow::Result<Psbt> {
+        let my_psbt = self.part_psbt.as_ref().unwrap();
+        //sanity check that Bob doesn't send UTXOs owned by alice.
+        for pbst_input in other_psbt.inputs.iter() {
+            let scriptbuf = pbst_input.clone().witness_utxo.unwrap().script_pubkey;
+            if ctx.funds.wallet.is_mine(scriptbuf.clone()) {
+                // bob is trying to trick me.
+                panic!("Fraud detected. Bob send me my own scriptbuf {:?}", scriptbuf)
+            }
+        }
+        // TODO sanity check if bobs transaction actually calculate the fee correctly, otherwise he could save on fess at the expense of alice
+
+        // recreate combined ty from scratch
+        let mut builder = ctx.funds.wallet.build_tx();
+        builder.manually_selected_only(); // only use inputs we have already identified.
+        builder.set_exact_sequence(Sequence::MAX); // no RBF, RBF disabled for foreign utxos anyway.
+        // keep track of the fees, as total fees is not equal to sum of fess from alice and bob psbts.
+        let mut total: i64 = 0; // measured in sats
+        // add deposit outputs first.
+        let p_tik_adr = ctx.p_tik.get_agg_adr()?;
+        builder.add_recipient(p_tik_adr.script_pubkey(), *ctx.seller_amount);
+        total = total - ctx.seller_amount.to_sat() as i64;
+
+        let q_tik_adr = ctx.q_tik.get_agg_adr()?;
+        builder.add_recipient(q_tik_adr.script_pubkey(), *ctx.buyer_amount);
+        total = total - ctx.buyer_amount.to_sat() as i64;
+
+        // in the following merge, we want to copy the funding inputs and the change outputs
+        // so we disregard basically all known scripts.
+        // technically, only the script created in the 'generate_part_tx()' should appear
+        let disregard_scripts = &[
+            ctx.p_tik.pub_point.key_spend_no_merkle_address()?.script_pubkey(),
+            ctx.q_tik.pub_point.key_spend_no_merkle_address()?.script_pubkey(),
+            ctx.p_tik.other_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
+            ctx.q_tik.other_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
+            ctx.p_tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(), // technically these 2 script should not appear
+            ctx.q_tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(), // but dont let the other side so some fancy stuff
+        ];
+        total = builder.merge(my_psbt, false, total, disregard_scripts)?;
+        total = builder.merge(other_psbt, true, total, disregard_scripts)?;
+
+        builder.fee_absolute(Amount::from_sat(total as u64));
+        builder.nlocktime(LockTime::ZERO); // TODO RBF disabled anyway, so this value can be disregarded.
+
+        // Attempt to finish and return the merged PSBT
+        let mut merged_psbt = builder.finish()?;
+
+        // We need to sort the order of inputs and output to make the TXid of alice nd bod equal
+        // TODO come up with a randomized sort to preserve privacy
+        // TODO use builder.ordering() with custom alg.
+        sort(&mut merged_psbt);
+
+        // sign my psbt
+        ctx.funds.wallet.sign(&mut merged_psbt, SignOptions::default())?;
+        Ok(merged_psbt)
     }
 }
 /**
@@ -161,13 +260,20 @@ impl AggKey {
 
     // check https://bitcoin.stackexchange.com/questions/116384/what-are-the-steps-to-convert-a-private-key-to-a-taproot-address
     fn get_agg_adr(&self) -> anyhow::Result<Address> {
-        let pubkey = PublicKey::from_slice(&(self.agg_point.unwrap().serialize()))?.to_x_only_pubkey();
-        let secp = Secp256k1::new();
+        self.agg_point.unwrap().key_spend_no_merkle_address()
+    }
+}
+trait PointExt {
+    fn key_spend_no_merkle_address(&self) -> anyhow::Result<Address>;
+}
+impl PointExt for Point {
+    fn key_spend_no_merkle_address(&self) -> anyhow::Result<Address> {
+        let pubkey = PublicKey::from_slice(&self.serialize())?.to_x_only_pubkey();
+        let secp = Secp256k1::new(); // TODO make it static?
         let adr = Address::p2tr(&secp, pubkey, None, KnownHrp::Regtest);
         Ok(adr)
     }
 }
-
 pub struct MusigProtocol<'a> {
     funds: TestWallet,
     role: ProtocolRole,
