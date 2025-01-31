@@ -15,7 +15,7 @@ use bdk_wallet::miniscript::ToPublicKey;
 This is not only testing code.
 It also shows how the Java FSM is supposed to call this library
 
-Of course the tests do not need to be replicated in Java. Nor the Nigiri code.
+Of course the asserts do not need to be replicated in Java. Nor the Nigiri code.
 */
 #[test]
 fn test_musig() -> anyhow::Result<()> {
@@ -29,6 +29,8 @@ fn test_musig() -> anyhow::Result<()> {
     crate::nigiri::fund_wallet(&mut alice_funds);
     let seller_amount = &Amount::from_btc(1.4)?;
     let buyer_amount = &Amount::from_btc(0.2)?;
+
+    // init protocol --------------------------
     let alice_context = BMPContext::new(alice_funds, ProtocolRole::Seller, seller_amount.clone(), buyer_amount.clone())?;
 
     let mut alice = BMPProtocol::new(alice_context)?;
@@ -55,6 +57,7 @@ fn test_musig() -> anyhow::Result<()> {
 
     assert_eq!(alice_r3.deposit_txid, bob_r3.deposit_txid);
     dbg!(&alice_r3.deposit_txid);
+    crate::nigiri::tiktok();
     Ok(())
 }
 pub struct Round1Parameter {
