@@ -1,7 +1,7 @@
 use crate::{ProtocolRole, TestWallet};
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::absolute::LockTime;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::{Address, Amount, FeeRate, Psbt, Sequence, Txid, Weight};
-use bdk_wallet::bitcoin::{KnownHrp, PublicKey, ScriptBuf};
+use bdk_wallet::bitcoin::{KnownHrp, OutPoint, PublicKey, ScriptBuf};
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::{SignOptions, TxBuilder};
 use musig2::KeyAggContext;
@@ -61,17 +61,28 @@ fn test_musig() -> anyhow::Result<()> {
     Ok(())
 }
 pub struct Round1Parameter {
+    // DepositTx --------
     p_a: Point,
     q_a: Point,
     dep_part_psbt: Psbt,
+    // Swap Tx -----
+    // public nounce
+    // Seller address where to send the swap amount to
 }
 pub(crate) struct Round2Parameter {
+    // DepositTx --------
     p_agg: Point,
     q_agg: Point,
     deposit_tx_signed: Psbt,
+    // SwapTx --------------
+    // partial adaptive  signature for SwapTx
 }
 pub(crate) struct Round3Parameter {
-    deposit_txid: Txid,
+    // DepositTx --------
+    deposit_txid: Txid, // only for verification / fast fail
+    // SwapTx --------------
+    // aggregated adaptive signature for SwapTx, not send actually
+
 }
 /**
 this context is for the whole process and need to be persisted by the caller
@@ -166,7 +177,20 @@ impl BMPProtocol {
         r.get_agg_adr().unwrap()
     }
 }
+/**
+Only the seller gets a SwapTx, this is the only asymmetric part of the protocol
+*/
+struct SwapTx {
+    swap_spend: ScriptBuf,
+}
 
+impl SwapTx {
+    fn new() -> SwapTx {
+        SwapTx {
+            swap_spend: ScriptBuf::new(),
+        }
+    }
+}
 struct DepositTx {
     part_psbt: Option<Psbt>,
     signed_psbt: Option<Psbt>,
@@ -283,6 +307,21 @@ impl DepositTx {
         // TODO alice and bob will broadcast, is that a bug or a feature?
         ctx.funds.client.transaction_broadcast(&tx)?;
         Ok(tx.compute_txid())
+    }
+
+    fn get_outpoint_for(self, script: ScriptBuf) -> anyhow::Result<OutPoint> {
+        let tx = self.tx.unwrap();
+
+        for (index, output) in tx.output.iter().enumerate() {
+            if output.script_pubkey == script {
+                return Ok(OutPoint {
+                    txid: tx.compute_txid(),
+                    vout: index as u32,
+                });
+            }
+        }
+
+        Err(anyhow::anyhow!("No matching output found for the provided script"))
     }
 }
 /**
