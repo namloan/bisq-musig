@@ -31,7 +31,7 @@ struct TestWallet {
     wallet: Wallet,
     client: BdkElectrumClient<electrum_client::Client>,
 }
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum ProtocolRole {
     Seller,
     Buyer,
