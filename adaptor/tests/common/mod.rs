@@ -1,5 +1,7 @@
 pub fn setup() {
     use std::process::Command;
+    use std::thread;
+    use std::time::Duration;
         
     println!("Starting the setup...");
 
@@ -21,7 +23,43 @@ pub fn setup() {
         }
     }
 
-    // Run 'nigiri start' to start Nigiri
+    // Stop Nigiri first
+    println!("Stopping Nigiri...");
+    let _ = Command::new("nigiri")
+        .arg("stop")
+        .output();
+
+    // Force remove any existing Bitcoin container
+    println!("Removing existing Bitcoin container...");
+    let _ = Command::new("docker")
+        .args(["rm", "-f", "nigiri-bitcoin"])
+        .output();
+
+    // Remove Bitcoin data volume
+    println!("Removing Bitcoin data volume...");
+    let _ = Command::new("docker")
+        .args(["volume", "rm", "-f", "nigiri-bitcoin-data"])
+        .output();
+
+    // Create a temporary container to clean up wallet data
+    println!("Cleaning up wallet data...");
+    let _ = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            "nigiri-bitcoin-data:/data",
+            "alpine",
+            "sh",
+            "-c",
+            "rm -rf /data/.bitcoin/regtest/wallets/*"
+        ])
+        .output();
+
+    thread::sleep(Duration::from_secs(2));
+
+    // Start fresh Nigiri instance
+    println!("Starting fresh Nigiri instance...");
     let nigiri_output = Command::new("nigiri")
         .arg("start")
         .output();
@@ -43,6 +81,10 @@ pub fn setup() {
             std::process::exit(1);
         }
     }
+
+    // Wait for Nigiri's Bitcoin node to be fully ready
+    println!("Waiting for Nigiri services to be ready...");
+    thread::sleep(Duration::from_secs(10));
 
     println!("Setup completed successfully.");
 }
