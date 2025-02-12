@@ -32,6 +32,18 @@ fn create_wallet(name: &str) -> Result<String, String> {
     run_nigiri_command(&["rpc", &format!("-rpcwallet={}", name), "getnewaddress"])
 }
 
+/// Integration test that simulates a basic transaction between two wallets.
+/// 
+/// This test:
+/// 1. Sets up a test environment using Nigiri (Bitcoin regtest)
+/// 2. Creates unique timestamped wallets for Alice and Bob
+/// 3. Funds Alice's wallet using the Nigiri faucet
+/// 4. Simulates a transaction from Alice to Bob (0.01 BTC)
+/// 5. Verifies the transaction by checking Bob's final balance
+/// 
+/// Requirements:
+/// - Nigiri must be installed and running
+/// - Test runs on Bitcoin regtest network
 #[test]
 fn test_bisq_musig() -> Result<(), String> {
     common::setup();
