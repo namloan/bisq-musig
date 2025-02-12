@@ -1,6 +1,6 @@
-<mxfile host="drawio-plugin" modified="2025-01-24T11:36:00.800Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" etag="xz9wV6IQ6gktp9KqYHCb" version="22.1.22" type="embed">
+<mxfile host="drawio-plugin" modified="2025-01-31T16:12:30.700Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" etag="_4Xx8gRMAs4G4nXeBrTu" version="22.1.22" type="embed">
   <diagram name="Page-1" id="4t2JOigZqfDRrmz9JXpL">
-    <mxGraphModel dx="1352" dy="1173" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="827" pageHeight="1169" background="#FFFFFF" math="1" shadow="0">
+    <mxGraphModel dx="906" dy="1173" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="827" pageHeight="1169" background="#FFFFFF" math="1" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -108,7 +108,7 @@
         <mxCell id="51" value="Claim Tx Alice / Bob" style="swimlane;fontStyle=0;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#d0cee2;strokeColor=#56517e;" parent="1" vertex="1">
           <mxGeometry x="790" y="400" width="140" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="52" value="Output 0: to Alice / Bob wallet" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;rotatable=0;whiteSpace=wrap;html=1;" parent="51" vertex="1">
+        <mxCell id="52" value="&lt;b&gt;Output 0:&lt;/b&gt; to Alice / Bob wallet" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=4;spacingRight=4;overflow=hidden;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;rotatable=0;whiteSpace=wrap;html=1;" parent="51" vertex="1">
           <mxGeometry y="30" width="140" height="30" as="geometry" />
         </mxCell>
         <mxCell id="60" value="&lt;h1&gt;Transactions&amp;nbsp;&lt;/h1&gt;&lt;p&gt;&lt;span style=&quot;background-color: rgb(255, 230, 204);&quot;&gt;These transaction preexist, they are the funds Alice and Bob have for beginning the trade. All other transactions get constructed when the trade starts.&lt;/span&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span style=&quot;background-color: rgb(213, 232, 212);&quot;&gt;Only the DepositTx is broadcasted at the time of creation, the transactions right of it will the problem that the necessary fee rate is not known for the time they are broadcasted.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style=&quot;background-color: rgb(208, 206, 226);&quot;&gt;These transaction have outputs which are spendable by their owners, to bump up the fees the owner can CPFP them.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style=&quot;background-color: rgb(176, 227, 230);&quot;&gt;These transactions need an anchor output, so that the time they are mined can be speed up. This is especially important for RedirectTX since it must be mined before t&lt;sub&gt;2&lt;/sub&gt;&lt;span style=&quot;font-size: 10px;&quot;&gt;&amp;nbsp;.&lt;/span&gt;&lt;/span&gt;&lt;/p&gt;" style="text;html=1;strokeColor=none;fillColor=none;spacing=5;spacingTop=-20;whiteSpace=wrap;overflow=hidden;rounded=0;" parent="1" vertex="1">

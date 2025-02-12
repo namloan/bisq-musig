@@ -244,7 +244,7 @@ fn fund_address(address: &str) {
     let resp = mine(address, 1);
     eprintln!("reponse {}", String::from_utf8_lossy(&resp.stdout));
 }
-fn tiktok() -> Output {
+pub(crate) fn tiktok() -> Output {
     mine(FUND_ADDRESS, 1)
 }
 fn mine(address: &str, num_blocks: u16) -> Output {
