@@ -65,14 +65,14 @@ $$b = H_{non}(R_1 , R_2, P, m) $$
 $$(3)\hspace{5pt} R = R_1 + b \cdot R_2 + T$$
 
 Note that the $T$ is added to $R$, this seperates normal MuSig2 from adaptive MuSig2.
-This is done via `AggNonce::sum()` and `sign_partial_adaptor(T)`. This is split into 2 methods, the aggregated Nounce is in `musig2`
+This is done via `AggNonce::sum()` and `musig2::adaptor::sign_partial(T)`. This is split into 2 methods, the aggregated Nounce is in `musig2`
 without Adaptor T, it will be added in the second method right before generating the partial signature.
 
 Alice creates her partial signature
 
 $$(4)\hspace{5pt} s_a = r_{a,1} + b \cdot r_{a,2} + a_a \cdot H_{sig}(R,P,m) \cdot p_a$$
 
-$s_a$ is the partial signature calculated via `sign_partial_adaptor(T)` (Note that the public Nonces have been
+$s_a$ is the partial signature calculated via `musig2::adaptor::sign_partial(T)` (Note that the public Nonces have been
 exchanged already)
 
 Note, that when Bob calculates his partial signature with (4) he can be sure, that his signature can only be used with
@@ -83,7 +83,10 @@ We can multiply equation (4) with $G$ and verify the partial signature with this
 $$s_a \cdot G = R_{a,1} + b \cdot R_{a,2}+a_a \cdot H_{sig}(R,P,m) \cdot P_a$$
 
 This is being done by calling
-`verify_partial_adaptor()` which is done automatically within `sign_partial_adaptor(T)`.
+`musig2::adaptor::verify_partial()` which is also done within `musig2::adaptor::sign_partial(T)`. Partial signature
+from other parties should be verified using this method. AdamISZ pointed out that there is a possible
+[Forgery with a fake key in MuSig2](https://gist.github.com/AdamISZ/ca974ed67889cedc738c4a1f65ff620b). This does not
+apply to our use case, since the necessary ramification for the forgery are not given.
 
 ## Signature aggregation
 
