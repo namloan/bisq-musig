@@ -44,6 +44,7 @@ P_a &\ne& P_b
 \end{eqnarray}$
 
 by calling `KeyAggContext::new([P_a,P_b])` with the pubkeys of all participants.
+$a_i$ is called the coefficients.
 
 ### Sign round 1
 
