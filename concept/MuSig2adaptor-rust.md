@@ -41,8 +41,10 @@ $ \begin{eqnarray}
 where \\ \hspace{5pt} a_a &=& H_{agg}(sha256(P_a,P_b),P_a) \\
 a_b &=& 1 \\
 P_a &\ne& P_b
-\end{eqnarray}$\
+\end{eqnarray}$
+
 by calling `KeyAggContext::new([P_a,P_b])` with the pubkeys of all participants.
+$a_i$ is called the coefficients.
 
 ### Sign round 1
 
@@ -56,13 +58,12 @@ Up to here, its independent of the message and can be precalculated.
 
 From collected Nonce the aggregated Nonce $R$ is calculated:
 
-$$(2)\hspace{5pt} R_1 = R_{a,1} + R_{b,1}$$
-
-$$R_2 = R_{a,2} + R_{b,2}$$
-
-$$b = H_{non}(R_1 , R_2, P, m) $$
-
-$$(3)\hspace{5pt} R = R_1 + b \cdot R_2 + T$$
+$\hspace{100pt}\begin{eqnarray*}
+(2)\hspace{5pt} R_1 &=& R_{a,1} + R_{b,1} \\
+R_2 &=& R_{a,2} + R_{b,2} \\
+b &=& H_{non}(R_1 , R_2, P, m) \\
+(3)\hspace{5pt} R &=& R_1 + b \cdot R_2 + T
+\end{eqnarray*}$
 
 Note that the $T$ is added to $R$, this seperates normal MuSig2 from adaptive MuSig2.
 This is done via `AggNonce::sum()` and `musig2::adaptor::sign_partial(T)`. This is split into 2 methods, the aggregated Nounce is in `musig2`
