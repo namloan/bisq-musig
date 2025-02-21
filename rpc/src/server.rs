@@ -1,4 +1,5 @@
 mod protocol;
+mod storage;
 
 use futures::stream;
 use helloworld::{ClockRequest, CloseTradeRequest, CloseTradeResponse, DepositPsbt,
@@ -21,8 +22,9 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
-use crate::protocol::{ByRef, ByVal, ExchangedSigs, ProtocolErrorKind, Role, SwapTxInputScalar,
-    TradeModel, TradeModelStore, TxInputParamVector, TRADE_MODELS};
+use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, SwapTxInputScalar,
+    TradeModel, TradeModelStore, TRADE_MODELS};
+use crate::storage::{ByRef, ByVal};
 
 pub mod helloworld {
     tonic::include_proto!("helloworld");
@@ -110,13 +112,20 @@ impl MuSig for MyMuSig {
             warning_tx_fee_bump_address: "address1".to_string(),
             redirect_tx_fee_bump_address: "address2".to_string(),
             half_deposit_psbt: vec![],
-            swap_tx_input_nonce_share: my_nonce_shares.swap_tx_input_param.serialize().into(),
-            buyers_warning_tx_buyer_input_nonce_share: my_nonce_shares.buyers_warning_tx_buyer_input_param.serialize().into(),
-            buyers_warning_tx_seller_input_nonce_share: my_nonce_shares.buyers_warning_tx_seller_input_param.serialize().into(),
-            sellers_warning_tx_buyer_input_nonce_share: my_nonce_shares.sellers_warning_tx_buyer_input_param.serialize().into(),
-            sellers_warning_tx_seller_input_nonce_share: my_nonce_shares.sellers_warning_tx_seller_input_param.serialize().into(),
-            buyers_redirect_tx_input_nonce_share: my_nonce_shares.buyers_redirect_tx_input_param.serialize().into(),
-            sellers_redirect_tx_input_nonce_share: my_nonce_shares.sellers_redirect_tx_input_param.serialize().into(),
+            swap_tx_input_nonce_share:
+            my_nonce_shares.swap_tx_input_nonce_share.serialize().into(),
+            buyers_warning_tx_buyer_input_nonce_share:
+            my_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.serialize().into(),
+            buyers_warning_tx_seller_input_nonce_share:
+            my_nonce_shares.buyers_warning_tx_seller_input_nonce_share.serialize().into(),
+            sellers_warning_tx_buyer_input_nonce_share:
+            my_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.serialize().into(),
+            sellers_warning_tx_seller_input_nonce_share:
+            my_nonce_shares.sellers_warning_tx_seller_input_nonce_share.serialize().into(),
+            buyers_redirect_tx_input_nonce_share:
+            my_nonce_shares.buyers_redirect_tx_input_nonce_share.serialize().into(),
+            sellers_redirect_tx_input_nonce_share:
+            my_nonce_shares.sellers_redirect_tx_input_nonce_share.serialize().into(),
         };
 
         Ok(Response::new(response))
@@ -131,25 +140,35 @@ impl MuSig for MyMuSig {
         let mut trade_model = trade_model.lock().unwrap();
         let peer_nonce_shares = request.peers_nonce_shares
             .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
-        trade_model.set_peer_nonce_shares(TxInputParamVector {
-            swap_tx_input_param: peer_nonce_shares.swap_tx_input_nonce_share.my_try_into()?,
-            buyers_warning_tx_buyer_input_param: peer_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-            buyers_warning_tx_seller_input_param: peer_nonce_shares.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
-            sellers_warning_tx_buyer_input_param: peer_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-            sellers_warning_tx_seller_input_param: peer_nonce_shares.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
-            buyers_redirect_tx_input_param: peer_nonce_shares.buyers_redirect_tx_input_nonce_share.my_try_into()?,
-            sellers_redirect_tx_input_param: peer_nonce_shares.sellers_redirect_tx_input_nonce_share.my_try_into()?,
+        trade_model.set_peer_nonce_shares(ExchangedNonces {
+            swap_tx_input_nonce_share:
+            peer_nonce_shares.swap_tx_input_nonce_share.my_try_into()?,
+            buyers_warning_tx_buyer_input_nonce_share:
+            peer_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+            buyers_warning_tx_seller_input_nonce_share:
+            peer_nonce_shares.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
+            sellers_warning_tx_buyer_input_nonce_share:
+            peer_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+            sellers_warning_tx_seller_input_nonce_share:
+            peer_nonce_shares.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
+            buyers_redirect_tx_input_nonce_share:
+            peer_nonce_shares.buyers_redirect_tx_input_nonce_share.my_try_into()?,
+            sellers_redirect_tx_input_nonce_share:
+            peer_nonce_shares.sellers_redirect_tx_input_nonce_share.my_try_into()?,
         });
         trade_model.aggregate_nonce_shares()?;
         trade_model.sign_partial()?;
         let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
             .ok_or_else(|| Status::internal("missing partial signatures"))?;
         let response = PartialSignaturesMessage {
-            peers_warning_tx_buyer_input_partial_signature: my_partial_signatures.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
-            peers_warning_tx_seller_input_partial_signature: my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
-            peers_redirect_tx_input_partial_signature: my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
-            // swap_tx_input_adaptor: my_partial_signatures.swap_tx_input_adaptor.map(|a| a.serialize().into()),
-            swap_tx_input_scalar: my_partial_signatures.swap_tx_input_scalar.map(Into::into),
+            peers_warning_tx_buyer_input_partial_signature:
+            my_partial_signatures.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
+            peers_warning_tx_seller_input_partial_signature:
+            my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
+            peers_redirect_tx_input_partial_signature:
+            my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
+            swap_tx_input_scalar:
+            my_partial_signatures.swap_tx_input_scalar.map(Into::into),
         };
 
         Ok(Response::new(response))
@@ -165,10 +184,14 @@ impl MuSig for MyMuSig {
         let peers_partial_signatures = request.peers_partial_signatures
             .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
         trade_model.set_peer_partial_signatures_on_my_txs(ExchangedSigs {
-            peers_warning_tx_buyer_input_partial_signature: peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
-            peers_warning_tx_seller_input_partial_signature: peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
-            peers_redirect_tx_input_partial_signature: peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
-            swap_tx_input_scalar: peers_partial_signatures.swap_tx_input_scalar.as_ref().my_try_into()?,
+            peers_warning_tx_buyer_input_partial_signature:
+            peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
+            peers_warning_tx_seller_input_partial_signature:
+            peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
+            peers_redirect_tx_input_partial_signature:
+            peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
+            swap_tx_input_scalar:
+            peers_partial_signatures.swap_tx_input_scalar.as_ref().my_try_into()?,
         });
         trade_model.aggregate_partial_signatures()?;
         let response = DepositPsbt {

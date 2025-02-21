@@ -2,10 +2,11 @@ use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignatu
     SecNonce, SecNonceBuilder};
 use secp::{Point, MaybeScalar, Scalar};
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::prelude::rust_2021::*;
 use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
+
+use crate::storage::{ByRef, ByVal, Storage};
 
 pub trait TradeModelStore {
     fn add_trade_model(&self, trade_state: TradeModel);
@@ -56,14 +57,14 @@ pub enum Role {
     BuyerAsTaker,
 }
 
-pub struct TxInputParamVector<T> {
-    pub swap_tx_input_param: T,
-    pub buyers_warning_tx_buyer_input_param: T,
-    pub buyers_warning_tx_seller_input_param: T,
-    pub sellers_warning_tx_buyer_input_param: T,
-    pub sellers_warning_tx_seller_input_param: T,
-    pub buyers_redirect_tx_input_param: T,
-    pub sellers_redirect_tx_input_param: T,
+pub struct ExchangedNonces<'a, S: Storage> {
+    pub swap_tx_input_nonce_share: S::Store<'a, PubNonce>,
+    pub buyers_warning_tx_buyer_input_nonce_share: S::Store<'a, PubNonce>,
+    pub buyers_warning_tx_seller_input_nonce_share: S::Store<'a, PubNonce>,
+    pub sellers_warning_tx_buyer_input_nonce_share: S::Store<'a, PubNonce>,
+    pub sellers_warning_tx_seller_input_nonce_share: S::Store<'a, PubNonce>,
+    pub buyers_redirect_tx_input_nonce_share: S::Store<'a, PubNonce>,
+    pub sellers_redirect_tx_input_nonce_share: S::Store<'a, PubNonce>,
 }
 
 pub struct ExchangedSigs<'a, S: Storage> {
@@ -79,22 +80,6 @@ pub enum SwapTxInputScalar<'a, S: Storage> {
 }
 
 pub type Adaptor = MaybeScalar;
-
-pub trait Storage {
-    type Store<'a, T: 'a>;
-}
-
-pub struct ByRef(Infallible);
-
-pub struct ByVal(Infallible);
-
-impl Storage for ByRef {
-    type Store<'a, T: 'a> = &'a T;
-}
-
-impl Storage for ByVal {
-    type Store<'a, T: 'a> = T;
-}
 
 pub struct KeyPair {
     pub pub_key: Point,
@@ -149,10 +134,6 @@ impl TradeModel {
         self.my_role == Role::BuyerAsMaker || self.my_role == Role::BuyerAsTaker
     }
 
-    // fn am_taker(&self) -> bool {
-    //     self.my_role == Role::BuyerAsTaker || self.my_role == Role::SellerAsTaker
-    // }
-
     pub fn init_my_key_shares(&mut self) {
         self.buyer_output_key_ctx.init_my_key_share();
         self.seller_output_key_ctx.init_my_key_share();
@@ -195,26 +176,40 @@ impl TradeModel {
         Ok(())
     }
 
-    pub fn get_my_nonce_shares(&self) -> Option<TxInputParamVector<&PubNonce>> {
-        Some(TxInputParamVector {
-            swap_tx_input_param: &(self.swap_tx_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
-            buyers_warning_tx_buyer_input_param: &(self.buyers_warning_tx_buyer_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
-            buyers_warning_tx_seller_input_param: &(self.buyers_warning_tx_seller_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
-            sellers_warning_tx_buyer_input_param: &(self.sellers_warning_tx_buyer_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
-            sellers_warning_tx_seller_input_param: &(self.sellers_warning_tx_seller_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
-            buyers_redirect_tx_input_param: &(self.buyers_redirect_tx_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
-            sellers_redirect_tx_input_param: &(self.sellers_redirect_tx_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+    pub fn get_my_nonce_shares(&self) -> Option<ExchangedNonces<ByRef>> {
+        Some(ExchangedNonces {
+            swap_tx_input_nonce_share:
+            &(self.swap_tx_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+            buyers_warning_tx_buyer_input_nonce_share:
+            &(self.buyers_warning_tx_buyer_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+            buyers_warning_tx_seller_input_nonce_share:
+            &(self.buyers_warning_tx_seller_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+            sellers_warning_tx_buyer_input_nonce_share:
+            &(self.sellers_warning_tx_buyer_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+            sellers_warning_tx_seller_input_nonce_share:
+            &(self.sellers_warning_tx_seller_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+            buyers_redirect_tx_input_nonce_share:
+            &(self.buyers_redirect_tx_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
+            sellers_redirect_tx_input_nonce_share:
+            &(self.sellers_redirect_tx_input_sig_ctx.my_nonce_share.as_ref()?.pub_nonce),
         })
     }
 
-    pub fn set_peer_nonce_shares(&mut self, peer_nonce_shares: TxInputParamVector<PubNonce>) {
-        self.swap_tx_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.swap_tx_input_param);
-        self.buyers_warning_tx_buyer_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.buyers_warning_tx_buyer_input_param);
-        self.buyers_warning_tx_seller_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.buyers_warning_tx_seller_input_param);
-        self.sellers_warning_tx_buyer_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.sellers_warning_tx_buyer_input_param);
-        self.sellers_warning_tx_seller_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.sellers_warning_tx_seller_input_param);
-        self.buyers_redirect_tx_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.buyers_redirect_tx_input_param);
-        self.sellers_redirect_tx_input_sig_ctx.peers_nonce_share = Some(peer_nonce_shares.sellers_redirect_tx_input_param);
+    pub fn set_peer_nonce_shares(&mut self, peer_nonce_shares: ExchangedNonces<ByVal>) {
+        self.swap_tx_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.swap_tx_input_nonce_share);
+        self.buyers_warning_tx_buyer_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.buyers_warning_tx_buyer_input_nonce_share);
+        self.buyers_warning_tx_seller_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.buyers_warning_tx_seller_input_nonce_share);
+        self.sellers_warning_tx_buyer_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.sellers_warning_tx_buyer_input_nonce_share);
+        self.sellers_warning_tx_seller_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.sellers_warning_tx_seller_input_nonce_share);
+        self.buyers_redirect_tx_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.buyers_redirect_tx_input_nonce_share);
+        self.sellers_redirect_tx_input_sig_ctx.peers_nonce_share =
+            Some(peer_nonce_shares.sellers_redirect_tx_input_nonce_share);
     }
 
     pub fn aggregate_nonce_shares(&mut self) -> Result<()> {
@@ -334,52 +329,9 @@ impl TradeModel {
     }
 }
 
-// impl<T> From<[T; 7]> for TxInputParamVector<T> {
-//     fn from(value: [T; 7]) -> Self {
-//         let value: (T, T, T, T, T, T, T) = value.into();
-//         TxInputParamVector {
-//             swap_tx_input_param: value.0,
-//             buyers_warning_tx_buyer_input_param: value.1,
-//             buyers_warning_tx_seller_input_param: value.2,
-//             sellers_warning_tx_buyer_input_param: value.3,
-//             sellers_warning_tx_seller_input_param: value.4,
-//             buyers_redirect_tx_input_param: value.5,
-//             sellers_redirect_tx_input_param: value.6,
-//         }
-//     }
-// }
-//
-// impl<T> From<TxInputParamVector<T>> for [T; 7] {
-//     fn from(value: TxInputParamVector<T>) -> Self {
-//         [value.swap_tx_input_param,
-//             value.buyers_warning_tx_buyer_input_param, value.buyers_warning_tx_seller_input_param,
-//             value.sellers_warning_tx_buyer_input_param, value.sellers_warning_tx_seller_input_param,
-//             value.buyers_redirect_tx_input_param, value.sellers_redirect_tx_input_param]
-//     }
-// }
-//
-// impl<'a, T> From<&'a TxInputParamVector<T>> for [&'a T; 7] {
-//     fn from(value: &'a TxInputParamVector<T>) -> Self {
-//         [&value.swap_tx_input_param,
-//             &value.buyers_warning_tx_buyer_input_param, &value.buyers_warning_tx_seller_input_param,
-//             &value.sellers_warning_tx_buyer_input_param, &value.sellers_warning_tx_seller_input_param,
-//             &value.buyers_redirect_tx_input_param, &value.sellers_redirect_tx_input_param]
-//     }
-// }
-//
-// impl<'a, T> From<&'a mut TxInputParamVector<T>> for [&'a mut T; 7] {
-//     fn from(value: &'a mut TxInputParamVector<T>) -> Self {
-//         [&mut value.swap_tx_input_param,
-//             &mut value.buyers_warning_tx_buyer_input_param, &mut value.buyers_warning_tx_seller_input_param,
-//             &mut value.sellers_warning_tx_buyer_input_param, &mut value.sellers_warning_tx_seller_input_param,
-//             &mut value.buyers_redirect_tx_input_param, &mut value.sellers_redirect_tx_input_param]
-//     }
-// }
-
 impl KeyPair {
     fn new() -> KeyPair {
         KeyPair {
-            // pub_key: "029ffbe722b147f3035c87cb1c60b9a5947dd49c774cc31e94773478711a929ac0".parse::<Point>().unwrap(),
             pub_key: Scalar::one().base_point_mul(),
             prv_key: Scalar::one(),
         }
