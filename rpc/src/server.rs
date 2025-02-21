@@ -1,11 +1,15 @@
 mod protocol;
 
 use futures::stream;
-use helloworld::{ClockRequest, DepositPsbt, DepositTxSignatureRequest, HelloReply, HelloRequest,
-    NonceShareMessage, NonceShareRequest, PartialSignatureMessage, PartialSignatureRequest,
-    PubKeyShareRequest, PubKeyShareResponse, PublishDepositTxRequest, TickEvent, TxConfirmationStatus};
+use helloworld::{ClockRequest, CloseTradeRequest, CloseTradeResponse, DepositPsbt,
+    DepositTxSignatureRequest, HelloReply, HelloRequest, NonceSharesMessage, NonceSharesRequest,
+    PartialSignaturesMessage, PartialSignaturesRequest, PubKeySharesRequest, PubKeySharesResponse,
+    PublishDepositTxRequest, SwapTxSignatureRequest, SwapTxSignatureResponse, TickEvent,
+    TxConfirmationStatus};
 use helloworld::greeter_server::{Greeter, GreeterServer};
 use helloworld::mu_sig_server::{MuSig, MuSigServer};
+use helloworld::partial_signatures_message::SwapTxInputScalar::{SwapTxInputBuyersPartialSignature,
+    SwapTxInputSellersAdaptor};
 use musig2::PubNonce;
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
@@ -17,7 +21,8 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
-use crate::protocol::{ProtocolErrorKind, Role, TradeModel, TradeModelStore, TxInputParamVector, TRADE_MODELS};
+use crate::protocol::{ByRef, ByVal, ExchangedSigs, ProtocolErrorKind, Role, SwapTxInputScalar,
+    TradeModel, TradeModelStore, TxInputParamVector, TRADE_MODELS};
 
 pub mod helloworld {
     tonic::include_proto!("helloworld");
@@ -54,9 +59,17 @@ impl Greeter for MyGreeter {
 #[derive(Default, Debug)]
 pub struct MyMuSig {}
 
+// FIXME: At present, the MuSig service passes some fields to the Java client that should be kept
+//  secret for a time before passing them to the peer, namely the buyer's partial signature on the
+//  swap tx and the seller's private key share for the buyer payout. Premature revelation of those
+//  secrets would allow the seller to close the trade before the buyer starts payment, or the buyer
+//  to close the trade before the seller had a chance to confirm receipt of payment (but after the
+//  buyer starts payment), respectively. This should probably be changed, as the Java client should
+//  never hold secrets which directly control funds (but doing so makes the RPC interface a little
+//  bigger and less symmetrical.)
 #[tonic::async_trait]
 impl MuSig for MyMuSig {
-    async fn init_trade(&self, request: Request<PubKeyShareRequest>) -> Result<Response<PubKeyShareResponse>, Status> {
+    async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>, Status> {
         println!("Got a request: {:?}", request);
 
         let request = request.into_inner();
@@ -64,17 +77,17 @@ impl MuSig for MyMuSig {
         trade_model.init_my_key_shares();
         let my_key_shares = trade_model.get_my_key_shares()
             .ok_or_else(|| Status::internal("missing key shares"))?;
-        let response = PubKeyShareResponse {
+        let response = PubKeySharesResponse {
             buyer_output_pub_key_share: my_key_shares[0].pub_key.serialize().into(),
             seller_output_pub_key_share: my_key_shares[1].pub_key.serialize().into(),
-            current_block_height: 80000,
+            current_block_height: 900000,
         };
         TRADE_MODELS.add_trade_model(trade_model);
 
         Ok(Response::new(response))
     }
 
-    async fn get_nonce_shares(&self, request: Request<NonceShareRequest>) -> Result<Response<NonceShareMessage>, Status> {
+    async fn get_nonce_shares(&self, request: Request<NonceSharesRequest>) -> Result<Response<NonceSharesMessage>, Status> {
         println!("Got a request: {:?}", request);
 
         let request = request.into_inner();
@@ -93,7 +106,7 @@ impl MuSig for MyMuSig {
         trade_model.prepared_tx_fee_rate = Some(request.prepared_tx_fee_rate);
         let my_nonce_shares = trade_model.get_my_nonce_shares()
             .ok_or_else(|| Status::internal("missing nonce shares"))?;
-        let response = NonceShareMessage {
+        let response = NonceSharesMessage {
             warning_tx_fee_bump_address: "address1".to_string(),
             redirect_tx_fee_bump_address: "address2".to_string(),
             half_deposit_psbt: vec![],
@@ -109,7 +122,7 @@ impl MuSig for MyMuSig {
         Ok(Response::new(response))
     }
 
-    async fn get_partial_signatures(&self, request: Request<PartialSignatureRequest>) -> Result<Response<PartialSignatureMessage>, Status> {
+    async fn get_partial_signatures(&self, request: Request<PartialSignaturesRequest>) -> Result<Response<PartialSignaturesMessage>, Status> {
         println!("Got a request: {:?}", request);
 
         let request = request.into_inner();
@@ -131,11 +144,12 @@ impl MuSig for MyMuSig {
         trade_model.sign_partial()?;
         let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
             .ok_or_else(|| Status::internal("missing partial signatures"))?;
-        let response = PartialSignatureMessage {
-            peers_warning_tx_buyer_input_partial_signature: my_partial_signatures[0].serialize().into(),
-            peers_warning_tx_seller_input_partial_signature: my_partial_signatures[1].serialize().into(),
-            peers_redirect_tx_input_partial_signature: my_partial_signatures[2].serialize().into(),
-            swap_tx_input_adaptor_signature: None,
+        let response = PartialSignaturesMessage {
+            peers_warning_tx_buyer_input_partial_signature: my_partial_signatures.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
+            peers_warning_tx_seller_input_partial_signature: my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
+            peers_redirect_tx_input_partial_signature: my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
+            // swap_tx_input_adaptor: my_partial_signatures.swap_tx_input_adaptor.map(|a| a.serialize().into()),
+            swap_tx_input_scalar: my_partial_signatures.swap_tx_input_scalar.map(Into::into),
         };
 
         Ok(Response::new(response))
@@ -150,11 +164,12 @@ impl MuSig for MyMuSig {
         let mut trade_model = trade_model.lock().unwrap();
         let peers_partial_signatures = request.peers_partial_signatures
             .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
-        trade_model.set_peer_partial_signatures_on_my_txs([
-            peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
-            peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
-            peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?
-        ]);
+        trade_model.set_peer_partial_signatures_on_my_txs(ExchangedSigs {
+            peers_warning_tx_buyer_input_partial_signature: peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
+            peers_warning_tx_seller_input_partial_signature: peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
+            peers_redirect_tx_input_partial_signature: peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
+            swap_tx_input_scalar: peers_partial_signatures.swap_tx_input_scalar.as_ref().my_try_into()?,
+        });
         trade_model.aggregate_partial_signatures()?;
         let response = DepositPsbt {
             deposit_psbt: b"deposit_psbt".into()
@@ -165,8 +180,63 @@ impl MuSig for MyMuSig {
 
     type PublishDepositTxStream = Pin<Box<dyn stream::Stream<Item=Result<TxConfirmationStatus, Status>> + Send>>;
 
-    async fn publish_deposit_tx(&self, _: Request<PublishDepositTxRequest>) -> Result<Response<Self::PublishDepositTxStream>, Status> {
-        Err(Status::unimplemented("not implemented"))
+    async fn publish_deposit_tx(&self, request: Request<PublishDepositTxRequest>) -> Result<Response<Self::PublishDepositTxStream>, Status> {
+        println!("Got a request: {:?}", request);
+
+        let request = request.into_inner();
+        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
+            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
+        let mut _trade_model = trade_model.lock().unwrap();
+
+        // TODO: *** BROADCAST DEPOSIT TX ***
+
+        let confirmation_event = TxConfirmationStatus {
+            tx: b"signed_deposit_tx".into(),
+            current_block_height: 900001,
+            num_confirmations: 1,
+        };
+
+        Ok(Response::new(Box::pin(stream::iter([Ok(confirmation_event)].into_iter()))))
+    }
+
+    async fn sign_swap_tx(&self, request: Request<SwapTxSignatureRequest>) -> Result<Response<SwapTxSignatureResponse>, Status> {
+        println!("Got a request: {:?}", request);
+
+        let request = request.into_inner();
+        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
+            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
+        let mut trade_model = trade_model.lock().unwrap();
+        trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?)?;
+        trade_model.aggregate_swap_tx_partial_signatures()?;
+        let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
+            .ok_or_else(|| Status::internal("missing private key share"))?;
+        let response = SwapTxSignatureResponse {
+            swap_tx: b"signed_swap_tx".into(),
+            peer_output_prv_key_share: prv_key_share.serialize().into(),
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn close_trade(&self, request: Request<CloseTradeRequest>) -> Result<Response<CloseTradeResponse>, Status> {
+        println!("Got a request: {:?}", request);
+
+        let request = request.into_inner();
+        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
+            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
+        let mut trade_model = trade_model.lock().unwrap();
+        if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
+            trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
+        } else {
+            // TODO: *** BROADCAST SWAP TX ***
+        }
+        let my_prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
+            .ok_or_else(|| Status::internal("missing private key share"))?;
+        let response = CloseTradeResponse {
+            peer_output_prv_key_share: my_prv_key_share.serialize().into(),
+        };
+
+        Ok(Response::new(response))
     }
 }
 
@@ -191,27 +261,27 @@ trait MyTryInto<T> {
     fn my_try_into(self) -> Result<T, Status>;
 }
 
-impl MyTryInto<Point> for Vec<u8> {
+impl MyTryInto<Point> for &[u8] {
     fn my_try_into(self) -> Result<Point, Status> {
-        (&self[..]).try_into().map_err(|_| Status::invalid_argument("could not decode point"))
+        self.try_into().map_err(|_| Status::invalid_argument("could not decode point"))
     }
 }
 
-impl MyTryInto<PubNonce> for Vec<u8> {
+impl MyTryInto<PubNonce> for &[u8] {
     fn my_try_into(self) -> Result<PubNonce, Status> {
-        (&self[..]).try_into().map_err(|_| Status::invalid_argument("could not decode pub nonce"))
+        self.try_into().map_err(|_| Status::invalid_argument("could not decode pub nonce"))
     }
 }
 
-impl MyTryInto<Scalar> for Vec<u8> {
+impl MyTryInto<Scalar> for &[u8] {
     fn my_try_into(self) -> Result<Scalar, Status> {
-        (&self[..]).try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
+        self.try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
     }
 }
 
-impl MyTryInto<MaybeScalar> for Vec<u8> {
+impl MyTryInto<MaybeScalar> for &[u8] {
     fn my_try_into(self) -> Result<MaybeScalar, Status> {
-        (&self[..]).try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
+        self.try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
     }
 }
 
@@ -220,6 +290,37 @@ impl MyTryInto<Role> for i32 {
         TryInto::<helloworld::Role>::try_into(self)
             .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
             .map(Into::into)
+    }
+}
+
+impl<'a> From<SwapTxInputScalar<'a, ByRef>> for helloworld::partial_signatures_message::SwapTxInputScalar {
+    fn from(value: SwapTxInputScalar<'a, ByRef>) -> Self {
+        match value {
+            SwapTxInputScalar::BuyersPartialSignature(s) => SwapTxInputBuyersPartialSignature(s.serialize().into()),
+            SwapTxInputScalar::SellersAdaptor(a) => SwapTxInputSellersAdaptor(a.serialize().into()),
+        }
+    }
+}
+
+impl<'a> MyTryInto<SwapTxInputScalar<'a, ByVal>> for &'a helloworld::partial_signatures_message::SwapTxInputScalar {
+    fn my_try_into(self) -> Result<SwapTxInputScalar<'a, ByVal>, Status> {
+        Ok(match self {
+            SwapTxInputBuyersPartialSignature(s) => SwapTxInputScalar::BuyersPartialSignature((&s[..]).my_try_into()?),
+            SwapTxInputSellersAdaptor(a) => SwapTxInputScalar::SellersAdaptor((&a[..]).my_try_into()?),
+        })
+    }
+}
+
+impl<T> MyTryInto<T> for Vec<u8> where for<'a> &'a [u8]: MyTryInto<T> {
+    fn my_try_into(self) -> Result<T, Status> { (&self[..]).my_try_into() }
+}
+
+impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
+    fn my_try_into(self) -> Result<Option<T>, Status> {
+        Ok(match self {
+            None => None,
+            Some(x) => Some(x.my_try_into()?)
+        })
     }
 }
 

@@ -1,7 +1,8 @@
 use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignature, PubNonce,
-    SecNonce, SecNonceBuilder, aggregate_partial_signatures, sign_partial};
-use secp::{Point, Scalar};
+    SecNonce, SecNonceBuilder};
+use secp::{Point, MaybeScalar, Scalar};
 use std::collections::BTreeMap;
+use std::convert::Infallible;
 use std::prelude::rust_2021::*;
 use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
@@ -37,6 +38,7 @@ pub struct TradeModel {
     pub prepared_tx_fee_rate: Option<f64>,
     buyer_output_key_ctx: KeyCtx,
     seller_output_key_ctx: KeyCtx,
+    swap_tx_input_adaptor: Option<Adaptor>,
     swap_tx_input_sig_ctx: SigCtx,
     buyers_warning_tx_buyer_input_sig_ctx: SigCtx,
     buyers_warning_tx_seller_input_sig_ctx: SigCtx,
@@ -54,7 +56,6 @@ pub enum Role {
     BuyerAsTaker,
 }
 
-#[derive(Default)]
 pub struct TxInputParamVector<T> {
     pub swap_tx_input_param: T,
     pub buyers_warning_tx_buyer_input_param: T,
@@ -63,6 +64,36 @@ pub struct TxInputParamVector<T> {
     pub sellers_warning_tx_seller_input_param: T,
     pub buyers_redirect_tx_input_param: T,
     pub sellers_redirect_tx_input_param: T,
+}
+
+pub struct ExchangedSigs<'a, S: Storage> {
+    pub peers_warning_tx_buyer_input_partial_signature: S::Store<'a, PartialSignature>,
+    pub peers_warning_tx_seller_input_partial_signature: S::Store<'a, PartialSignature>,
+    pub peers_redirect_tx_input_partial_signature: S::Store<'a, PartialSignature>,
+    pub swap_tx_input_scalar: Option<SwapTxInputScalar<'a, S>>,
+}
+
+pub enum SwapTxInputScalar<'a, S: Storage> {
+    BuyersPartialSignature(S::Store<'a, PartialSignature>),
+    SellersAdaptor(S::Store<'a, Adaptor>),
+}
+
+pub type Adaptor = MaybeScalar;
+
+pub trait Storage {
+    type Store<'a, T: 'a>;
+}
+
+pub struct ByRef(Infallible);
+
+pub struct ByVal(Infallible);
+
+impl Storage for ByRef {
+    type Store<'a, T: 'a> = &'a T;
+}
+
+impl Storage for ByVal {
+    type Store<'a, T: 'a> = T;
 }
 
 pub struct KeyPair {
@@ -197,52 +228,72 @@ impl TradeModel {
         Ok(())
     }
 
-    pub fn sign_partial(&mut self) -> Result<TxInputParamVector<&PartialSignature>> {
+    pub fn sign_partial(&mut self) -> Result<()> {
         // TODO: Make these dummy messages (txs-to-sign) non-fixed, for greater realism:
-        Ok(TxInputParamVector {
-            swap_tx_input_param: self.swap_tx_input_sig_ctx
-                .sign_partial(&self.seller_output_key_ctx, b"swap tx input".into())?,
-            buyers_warning_tx_buyer_input_param: self.buyers_warning_tx_buyer_input_sig_ctx
-                .sign_partial(&self.buyer_output_key_ctx, b"buyer's warning tx buyer input".into())?,
-            buyers_warning_tx_seller_input_param: self.buyers_warning_tx_seller_input_sig_ctx
-                .sign_partial(&self.seller_output_key_ctx, b"buyer's warning tx seller input".into())?,
-            sellers_warning_tx_buyer_input_param: self.sellers_warning_tx_buyer_input_sig_ctx
-                .sign_partial(&self.buyer_output_key_ctx, b"seller's warning tx buyer input".into())?,
-            sellers_warning_tx_seller_input_param: self.sellers_warning_tx_seller_input_sig_ctx
-                .sign_partial(&self.seller_output_key_ctx, b"seller's warning tx seller input".into())?,
-            buyers_redirect_tx_input_param: self.buyers_redirect_tx_input_sig_ctx
-                .sign_partial(&self.buyer_output_key_ctx, b"buyer's redirect tx input".into())?,
-            sellers_redirect_tx_input_param: self.sellers_redirect_tx_input_sig_ctx
-                .sign_partial(&self.seller_output_key_ctx, b"seller's redirect tx input".into())?,
-        })
+        let [buyer_key_ctx, seller_key_ctx] = [&self.buyer_output_key_ctx, &self.seller_output_key_ctx];
+
+        self.buyers_warning_tx_buyer_input_sig_ctx
+            .sign_partial(buyer_key_ctx, b"buyer's warning tx buyer input".into())?;
+        self.sellers_warning_tx_buyer_input_sig_ctx
+            .sign_partial(buyer_key_ctx, b"seller's warning tx buyer input".into())?;
+        self.buyers_redirect_tx_input_sig_ctx
+            .sign_partial(buyer_key_ctx, b"buyer's redirect tx input".into())?;
+
+        self.swap_tx_input_sig_ctx
+            .sign_partial(seller_key_ctx, b"swap tx input".into())?;
+        self.buyers_warning_tx_seller_input_sig_ctx
+            .sign_partial(seller_key_ctx, b"buyer's warning tx seller input".into())?;
+        self.sellers_warning_tx_seller_input_sig_ctx
+            .sign_partial(seller_key_ctx, b"seller's warning tx seller input".into())?;
+        self.sellers_redirect_tx_input_sig_ctx
+            .sign_partial(seller_key_ctx, b"seller's redirect tx input".into())?;
+
+        if !self.am_buyer() {
+            // TODO: Make sure that this simplistic difference, between the seller's multisig private key
+            //  share and the seller's signature share on the swap tx, actually gives a secure adaptor.
+            //  !! NEEDS CAREFUL CONSIDERATION !! (There may be a better / more standard approach.)
+            let sellers_prv_key_share = seller_key_ctx.my_key_share.as_ref().unwrap().prv_key;
+            let sellers_sig_share = *self.swap_tx_input_sig_ctx.my_partial_sig.as_ref().unwrap();
+            self.swap_tx_input_adaptor = Some(sellers_prv_key_share - sellers_sig_share);
+        }
+        Ok(())
     }
 
-    pub fn get_my_partial_signatures_on_peer_txs(&self) -> Option<[&PartialSignature; 3]> {
+    pub fn get_my_partial_signatures_on_peer_txs(&self) -> Option<ExchangedSigs<ByRef>> {
         Some(if self.am_buyer() {
-            [
-                self.sellers_warning_tx_buyer_input_sig_ctx.my_partial_sig.as_ref()?,
-                self.sellers_warning_tx_seller_input_sig_ctx.my_partial_sig.as_ref()?,
-                self.sellers_redirect_tx_input_sig_ctx.my_partial_sig.as_ref()?
-            ]
+            ExchangedSigs {
+                peers_warning_tx_buyer_input_partial_signature: self.sellers_warning_tx_buyer_input_sig_ctx.my_partial_sig.as_ref()?,
+                peers_warning_tx_seller_input_partial_signature: self.sellers_warning_tx_seller_input_sig_ctx.my_partial_sig.as_ref()?,
+                peers_redirect_tx_input_partial_signature: self.sellers_redirect_tx_input_sig_ctx.my_partial_sig.as_ref()?,
+                swap_tx_input_scalar: Some(SwapTxInputScalar::BuyersPartialSignature(self.swap_tx_input_sig_ctx.my_partial_sig.as_ref()?)),
+            }
         } else {
-            [
-                self.buyers_warning_tx_buyer_input_sig_ctx.my_partial_sig.as_ref()?,
-                self.buyers_warning_tx_seller_input_sig_ctx.my_partial_sig.as_ref()?,
-                self.buyers_redirect_tx_input_sig_ctx.my_partial_sig.as_ref()?
-            ]
+            ExchangedSigs {
+                peers_warning_tx_buyer_input_partial_signature: self.buyers_warning_tx_buyer_input_sig_ctx.my_partial_sig.as_ref()?,
+                peers_warning_tx_seller_input_partial_signature: self.buyers_warning_tx_seller_input_sig_ctx.my_partial_sig.as_ref()?,
+                peers_redirect_tx_input_partial_signature: self.buyers_redirect_tx_input_sig_ctx.my_partial_sig.as_ref()?,
+                swap_tx_input_scalar: Some(SwapTxInputScalar::SellersAdaptor(self.swap_tx_input_adaptor.as_ref()?)),
+            }
         })
     }
 
-    pub fn set_peer_partial_signatures_on_my_txs(&mut self, peers_partial_signatures: [PartialSignature; 3]) {
-        let peers_partial_signatures: (_, _, _) = peers_partial_signatures.into();
+    pub fn set_peer_partial_signatures_on_my_txs(&mut self, sigs: ExchangedSigs<ByVal>) {
         if self.am_buyer() {
-            self.buyers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(peers_partial_signatures.0);
-            self.buyers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(peers_partial_signatures.1);
-            self.buyers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(peers_partial_signatures.2);
+            self.buyers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
+            self.buyers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
+            self.buyers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(sigs.peers_redirect_tx_input_partial_signature);
+            if let Some(SwapTxInputScalar::SellersAdaptor(adaptor)) = sigs.swap_tx_input_scalar {
+                self.swap_tx_input_adaptor = Some(adaptor); // TODO: The buyer MUST check that the adaptor is valid!
+            }
         } else {
-            self.sellers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(peers_partial_signatures.0);
-            self.sellers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(peers_partial_signatures.1);
-            self.sellers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(peers_partial_signatures.2);
+            self.sellers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
+            self.sellers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
+            self.sellers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(sigs.peers_redirect_tx_input_partial_signature);
+            if let Some(SwapTxInputScalar::BuyersPartialSignature(sig)) = sigs.swap_tx_input_scalar {
+                // NOTE: This branch would not normally be used. The buyer should redact this field at the trade start
+                // and reveal it later, after payment is started, to prevent premature trade closure by the seller.
+                self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
+            }
         }
     }
 
@@ -256,6 +307,29 @@ impl TradeModel {
             self.sellers_warning_tx_seller_input_sig_ctx.aggregate_partial_signatures(&self.seller_output_key_ctx)?;
             self.sellers_redirect_tx_input_sig_ctx.aggregate_partial_signatures(&self.seller_output_key_ctx)?;
         }
+        Ok(())
+    }
+
+    pub fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) -> Result<()> {
+        self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
+        // TODO: If buyer, apply adaptor to determine the seller's private key share on the buyer output.
+        Ok(())
+    }
+
+    pub fn aggregate_swap_tx_partial_signatures(&mut self) -> Result<()> {
+        let my_key_ctx = if self.am_buyer() { &self.buyer_output_key_ctx } else { &self.seller_output_key_ctx };
+        self.swap_tx_input_sig_ctx.aggregate_partial_signatures(my_key_ctx)?;
+        Ok(())
+    }
+
+    pub fn get_my_private_key_share_for_peer_output(&self) -> Option<&Scalar> {
+        // TODO: Check that it's actually safe to release the funds at this point.
+        let peer_key_ctx = if self.am_buyer() { &self.seller_output_key_ctx } else { &self.buyer_output_key_ctx };
+        Some(&peer_key_ctx.my_key_share.as_ref()?.prv_key)
+    }
+
+    pub fn set_peer_private_key_share_for_my_output(&mut self, _prv_key_share: Scalar) -> Result<()> {
+        // TODO: Implement.
         Ok(())
     }
 }
@@ -380,7 +454,7 @@ impl SigCtx {
         let aggregated_nonce = &self.aggregated_nonce.as_ref()
             .ok_or(ProtocolErrorKind::MissingAggNonce)?;
 
-        let sig = sign_partial(key_agg_ctx, seckey, secnonce, aggregated_nonce, &message[..])?;
+        let sig = musig2::sign_partial(key_agg_ctx, seckey, secnonce, aggregated_nonce, &message[..])?;
         self.message = Some(message);
         Ok(self.my_partial_sig.insert(sig))
     }
@@ -403,12 +477,7 @@ impl SigCtx {
         let message = &self.message.as_ref()
             .ok_or(ProtocolErrorKind::MissingPartialSig)?[..];
 
-        // println!("Got key_agg_ctx: {:?}", key_agg_ctx);
-        // println!("Got aggregated_nonce: {:?}", aggregated_nonce);
-        // println!("Got partial_signatures: {:?}", partial_signatures);
-        // println!("Got message: {:?}", message);
-
-        let sig = aggregate_partial_signatures(key_agg_ctx, aggregated_nonce, partial_signatures, message)?;
+        let sig = musig2::aggregate_partial_signatures(key_agg_ctx, aggregated_nonce, partial_signatures, message)?;
         Ok(self.aggregated_sig.insert(sig))
     }
 }

@@ -28,7 +28,7 @@ public class TradeProtocolClient {
         // with messages A-D used to set up the trade. The Java client is (for the most part) just
         // forwarding on fields that were received in the last one or two gRPC responses.
 
-        var buyerPubKeyShareResponse = stub.initTrade(Helloworld.PubKeyShareRequest.newBuilder()
+        var buyerPubKeyShareResponse = stub.initTrade(Helloworld.PubKeySharesRequest.newBuilder()
                 .setTradeId("buyer-trade")
                 .setMyRole(Helloworld.Role.BUYER_AS_TAKER)
                 .build());
@@ -36,13 +36,13 @@ public class TradeProtocolClient {
 
         // Buyer sends Message A to seller.
 
-        var sellerPubKeyShareResponse = stub.initTrade(Helloworld.PubKeyShareRequest.newBuilder()
+        var sellerPubKeyShareResponse = stub.initTrade(Helloworld.PubKeySharesRequest.newBuilder()
                 .setTradeId("seller-trade")
                 .setMyRole(Helloworld.Role.SELLER_AS_MAKER)
                 .build());
         System.out.println("Got reply: " + sellerPubKeyShareResponse);
 
-        var sellerNonceShareMessage = stub.getNonceShares(Helloworld.NonceShareRequest.newBuilder()
+        var sellerNonceShareMessage = stub.getNonceShares(Helloworld.NonceSharesRequest.newBuilder()
                 .setTradeId("seller-trade")
                 .setBuyerOutputPeersPubKeyShare(buyerPubKeyShareResponse.getBuyerOutputPubKeyShare())
                 .setSellerOutputPeersPubKeyShare(buyerPubKeyShareResponse.getSellerOutputPubKeyShare())
@@ -56,7 +56,7 @@ public class TradeProtocolClient {
 
         // Seller sends Message B to buyer.
 
-        var buyerNonceShareMessage = stub.getNonceShares(Helloworld.NonceShareRequest.newBuilder()
+        var buyerNonceShareMessage = stub.getNonceShares(Helloworld.NonceSharesRequest.newBuilder()
                 .setTradeId("buyer-trade")
                 .setBuyerOutputPeersPubKeyShare(sellerPubKeyShareResponse.getBuyerOutputPubKeyShare())
                 .setSellerOutputPeersPubKeyShare(sellerPubKeyShareResponse.getSellerOutputPubKeyShare())
@@ -68,7 +68,7 @@ public class TradeProtocolClient {
                 .build());
         System.out.println("Got reply: " + buyerNonceShareMessage);
 
-        var buyerPartialSignatureMessage = stub.getPartialSignatures(Helloworld.PartialSignatureRequest.newBuilder()
+        var buyerPartialSignatureMessage = stub.getPartialSignatures(Helloworld.PartialSignaturesRequest.newBuilder()
                 .setTradeId("buyer-trade")
                 .setPeersNonceShares(sellerNonceShareMessage)
                 .build());
@@ -76,7 +76,7 @@ public class TradeProtocolClient {
 
         // Buyer sends Message C to seller.
 
-        var sellerPartialSignatureMessage = stub.getPartialSignatures(Helloworld.PartialSignatureRequest.newBuilder()
+        var sellerPartialSignatureMessage = stub.getPartialSignatures(Helloworld.PartialSignaturesRequest.newBuilder()
                 .setTradeId("seller-trade")
                 .setPeersNonceShares(buyerNonceShareMessage)
                 .build());
@@ -84,7 +84,7 @@ public class TradeProtocolClient {
 
         var sellerDepositPsbt = stub.signDepositTx(Helloworld.DepositTxSignatureRequest.newBuilder()
                 .setTradeId("seller-trade")
-                .setPeersPartialSignatures(buyerPartialSignatureMessage)
+                .setPeersPartialSignatures(buyerPartialSignatureMessage.toBuilder().clearSwapTxInputBuyersPartialSignature()) // REDACT swapTxInputBuyersPartialSignature.
                 .build());
         System.out.println("Got reply: " + sellerDepositPsbt);
 
@@ -97,5 +97,38 @@ public class TradeProtocolClient {
         System.out.println("Got reply: " + buyerDepositPsbt);
 
         // *** BUYER BROADCASTS DEPOSIT TX ***
+        var depositTxConfirmationIter = stub.publishDepositTx(Helloworld.PublishDepositTxRequest.newBuilder()
+                .setTradeId("buyer-trade")
+                .build());
+        depositTxConfirmationIter.forEachRemaining(reply -> System.out.println("Got reply: " + reply));
+        // ***********************************
+
+        // Buyer sends Message E to seller.
+
+        var swapTxSignatureResponse = stub.signSwapTx(Helloworld.SwapTxSignatureRequest.newBuilder()
+                .setTradeId("seller-trade")
+                .setSwapTxInputPeersPartialSignature(buyerPartialSignatureMessage.getSwapTxInputBuyersPartialSignature()) // NOW send the redacted swapTxInputBuyersPartialSignature.
+                .build());
+        System.out.println("Got reply: " + swapTxSignatureResponse);
+
+        // Seller sends Message F to buyer.
+
+        // *** BUYER CLOSES TRADE ***
+        var buyersCloseTradeResponse = stub.closeTrade(Helloworld.CloseTradeRequest.newBuilder()
+                .setTradeId("buyer-trade")
+                .setMyOutputPeersPrvKeyShare(swapTxSignatureResponse.getPeerOutputPrvKeyShare())
+                .build());
+        System.out.println("Got reply: " + buyersCloseTradeResponse);
+        // **************************
+
+        // Buyer sends Message G to seller.
+
+        // *** SELLER CLOSES TRADE ***
+        var sellersCloseTradeResponse = stub.closeTrade(Helloworld.CloseTradeRequest.newBuilder()
+                .setTradeId("seller-trade")
+                .setMyOutputPeersPrvKeyShare(buyersCloseTradeResponse.getPeerOutputPrvKeyShare())
+                .build());
+        System.out.println("Got reply: " + sellersCloseTradeResponse);
+        // ***************************
     }
 }
