@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::storage::{ByRef, ByVal, Storage};
 
 pub trait TradeModelStore {
-    fn add_trade_model(&self, trade_state: TradeModel);
+    fn add_trade_model(&self, trade_model: TradeModel);
     fn get_trade_model(&self, trade_id: &str) -> Option<Arc<Mutex<TradeModel>>>;
 }
 
@@ -57,6 +57,8 @@ pub enum Role {
     BuyerAsTaker,
 }
 
+#[expect(clippy::struct_field_names,
+reason = "not sure removing common postfix would make things clearer")] // TODO: Consider further.
 pub struct ExchangedNonces<'a, S: Storage> {
     pub swap_tx_input_nonce_share: S::Store<'a, PubNonce>,
     pub buyers_warning_tx_buyer_input_nonce_share: S::Store<'a, PubNonce>,
@@ -115,8 +117,8 @@ struct SigCtx {
 }
 
 impl TradeModel {
-    pub fn new(trade_id: String, my_role: Role) -> TradeModel {
-        let mut trade_model = TradeModel { trade_id, my_role, ..Default::default() };
+    pub fn new(trade_id: String, my_role: Role) -> Self {
+        let mut trade_model = Self { trade_id, my_role, ..Default::default() };
         let am_buyer = trade_model.am_buyer();
         trade_model.buyer_output_key_ctx.am_buyer = am_buyer;
         trade_model.seller_output_key_ctx.am_buyer = am_buyer;
@@ -272,7 +274,7 @@ impl TradeModel {
         })
     }
 
-    pub fn set_peer_partial_signatures_on_my_txs(&mut self, sigs: ExchangedSigs<ByVal>) {
+    pub fn set_peer_partial_signatures_on_my_txs(&mut self, sigs: &ExchangedSigs<ByVal>) {
         if self.am_buyer() {
             self.buyers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
             self.buyers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
@@ -305,6 +307,7 @@ impl TradeModel {
         Ok(())
     }
 
+    #[expect(clippy::unnecessary_wraps, reason = "unfinished; runtime errors are expected")]
     pub fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) -> Result<()> {
         self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
         // TODO: If buyer, apply adaptor to determine the seller's private key share on the buyer output.
@@ -312,17 +315,26 @@ impl TradeModel {
     }
 
     pub fn aggregate_swap_tx_partial_signatures(&mut self) -> Result<()> {
-        let my_key_ctx = if self.am_buyer() { &self.buyer_output_key_ctx } else { &self.seller_output_key_ctx };
+        let my_key_ctx = if self.am_buyer() {
+            &self.buyer_output_key_ctx
+        } else {
+            &self.seller_output_key_ctx
+        };
         self.swap_tx_input_sig_ctx.aggregate_partial_signatures(my_key_ctx)?;
         Ok(())
     }
 
     pub fn get_my_private_key_share_for_peer_output(&self) -> Option<&Scalar> {
         // TODO: Check that it's actually safe to release the funds at this point.
-        let peer_key_ctx = if self.am_buyer() { &self.seller_output_key_ctx } else { &self.buyer_output_key_ctx };
+        let peer_key_ctx = if self.am_buyer() {
+            &self.seller_output_key_ctx
+        } else {
+            &self.buyer_output_key_ctx
+        };
         Some(&peer_key_ctx.my_key_share.as_ref()?.prv_key)
     }
 
+    #[expect(clippy::unnecessary_wraps, clippy::unused_self, reason = "unfinished; runtime errors are expected")]
     pub fn set_peer_private_key_share_for_my_output(&mut self, _prv_key_share: Scalar) -> Result<()> {
         // TODO: Implement.
         Ok(())
@@ -330,8 +342,8 @@ impl TradeModel {
 }
 
 impl KeyPair {
-    fn new() -> KeyPair {
-        KeyPair {
+    fn new() -> Self {
+        Self {
             pub_key: Scalar::one().base_point_mul(),
             prv_key: Scalar::one(),
         }
@@ -339,11 +351,11 @@ impl KeyPair {
 }
 
 impl NoncePair {
-    fn new(nonce_seed: impl Into<NonceSeed>, aggregated_pub_key: Point) -> NoncePair {
+    fn new(nonce_seed: impl Into<NonceSeed>, aggregated_pub_key: Point) -> Self {
         let sec_nonce = SecNonceBuilder::new(nonce_seed)
             .with_aggregated_pubkey(aggregated_pub_key)
             .build();
-        NoncePair { pub_nonce: sec_nonce.public_nonce(), sec_nonce: Some(sec_nonce) }
+        Self { pub_nonce: sec_nonce.public_nonce(), sec_nonce: Some(sec_nonce) }
     }
 }
 
@@ -355,9 +367,9 @@ impl KeyCtx {
 
     fn get_key_shares(&self) -> Option<[Point; 2]> {
         Some(if self.am_buyer {
-            [self.my_key_share.as_ref()?.pub_key.clone(), self.peers_key_share.clone()?]
+            [self.my_key_share.as_ref()?.pub_key, self.peers_key_share?]
         } else {
-            [self.peers_key_share.clone()?, self.my_key_share.as_ref()?.pub_key.clone()]
+            [self.peers_key_share?, self.my_key_share.as_ref()?.pub_key]
         })
     }
 
@@ -373,9 +385,9 @@ impl KeyCtx {
 impl SigCtx {
     fn init_my_nonce_share(&mut self, key_ctx: &KeyCtx) -> Result<()> {
         // FIXME: Obtains a fixed nonce share -- must pass a _random_ seed data source to the constructor.
-        let aggregated_pub_key = key_ctx.aggregated_pub_key.as_ref()
-            .ok_or(ProtocolErrorKind::MissingAggPubKey)?.clone();
-        self.my_nonce_share = Some(NoncePair::new(&[0; 32], aggregated_pub_key));
+        let aggregated_pub_key = key_ctx.aggregated_pub_key
+            .ok_or(ProtocolErrorKind::MissingAggPubKey)?;
+        self.my_nonce_share = Some(NoncePair::new([0; 32], aggregated_pub_key));
         Ok(())
     }
 
@@ -413,9 +425,9 @@ impl SigCtx {
 
     fn get_partial_signatures(&self) -> Option<[PartialSignature; 2]> {
         Some(if self.am_buyer {
-            [self.my_partial_sig.clone()?, self.peers_partial_sig.clone()?]
+            [self.my_partial_sig?, self.peers_partial_sig?]
         } else {
-            [self.peers_partial_sig.clone()?, self.my_partial_sig.clone()?]
+            [self.peers_partial_sig?, self.my_partial_sig?]
         })
     }
 

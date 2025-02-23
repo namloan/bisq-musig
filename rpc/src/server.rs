@@ -14,19 +14,21 @@ use helloworld::partial_signatures_message::SwapTxInputScalar::{SwapTxInputBuyer
 use musig2::PubNonce;
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
+use std::iter;
 use std::pin::Pin;
 use std::prelude::rust_2021::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
-use tokio_stream::StreamExt;
+use tokio_stream::StreamExt as _;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
 use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, SwapTxInputScalar,
-    TradeModel, TradeModelStore, TRADE_MODELS};
+    TradeModel, TradeModelStore as _, TRADE_MODELS};
 use crate::storage::{ByRef, ByVal};
 
 pub mod helloworld {
+    #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
     tonic::include_proto!("helloworld");
 }
 
@@ -50,11 +52,13 @@ impl Greeter for MyGreeter {
     async fn subscribe_clock(&self, request: Request<ClockRequest>) -> Result<Response<Self::SubscribeClockStream>, Status> {
         println!("Got a request: {:?}", request);
 
-        let period = Duration::from_millis(request.into_inner().tick_period_millis as u64);
+        let period = Duration::from_millis(u64::from(request.into_inner().tick_period_millis));
 
         Ok(Response::new(Box::pin(stream::repeat(())
             .throttle(period)
-            .map(|()| Ok(TickEvent { current_time_millis: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 })))))
+            .map(|()| Ok(TickEvent {
+                current_time_millis: u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()).unwrap()
+            })))))
     }
 }
 
@@ -69,6 +73,7 @@ pub struct MyMuSig {}
 //  buyer starts payment), respectively. This should probably be changed, as the Java client should
 //  never hold secrets which directly control funds (but doing so makes the RPC interface a little
 //  bigger and less symmetrical.)
+#[expect(clippy::significant_drop_tightening, reason = "will refactor duplicated mutex code later (possibly with a macro)")] //TODO
 #[tonic::async_trait]
 impl MuSig for MyMuSig {
     async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>, Status> {
@@ -82,7 +87,7 @@ impl MuSig for MyMuSig {
         let response = PubKeySharesResponse {
             buyer_output_pub_key_share: my_key_shares[0].pub_key.serialize().into(),
             seller_output_pub_key_share: my_key_shares[1].pub_key.serialize().into(),
-            current_block_height: 900000,
+            current_block_height: 900_000,
         };
         TRADE_MODELS.add_trade_model(trade_model);
 
@@ -109,8 +114,8 @@ impl MuSig for MyMuSig {
         let my_nonce_shares = trade_model.get_my_nonce_shares()
             .ok_or_else(|| Status::internal("missing nonce shares"))?;
         let response = NonceSharesMessage {
-            warning_tx_fee_bump_address: "address1".to_string(),
-            redirect_tx_fee_bump_address: "address2".to_string(),
+            warning_tx_fee_bump_address: "address1".to_owned(),
+            redirect_tx_fee_bump_address: "address2".to_owned(),
             half_deposit_psbt: vec![],
             swap_tx_input_nonce_share:
             my_nonce_shares.swap_tx_input_nonce_share.serialize().into(),
@@ -183,7 +188,7 @@ impl MuSig for MyMuSig {
         let mut trade_model = trade_model.lock().unwrap();
         let peers_partial_signatures = request.peers_partial_signatures
             .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
-        trade_model.set_peer_partial_signatures_on_my_txs(ExchangedSigs {
+        trade_model.set_peer_partial_signatures_on_my_txs(&ExchangedSigs {
             peers_warning_tx_buyer_input_partial_signature:
             peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
             peers_warning_tx_seller_input_partial_signature:
@@ -215,11 +220,11 @@ impl MuSig for MyMuSig {
 
         let confirmation_event = TxConfirmationStatus {
             tx: b"signed_deposit_tx".into(),
-            current_block_height: 900001,
+            current_block_height: 900_001,
             num_confirmations: 1,
         };
 
-        Ok(Response::new(Box::pin(stream::iter([Ok(confirmation_event)].into_iter()))))
+        Ok(Response::new(Box::pin(stream::iter(iter::once(Ok(confirmation_event))))))
     }
 
     async fn sign_swap_tx(&self, request: Request<SwapTxSignatureRequest>) -> Result<Response<SwapTxSignatureResponse>, Status> {
@@ -266,17 +271,17 @@ impl MuSig for MyMuSig {
 impl From<helloworld::Role> for Role {
     fn from(value: helloworld::Role) -> Self {
         match value {
-            helloworld::Role::SellerAsMaker => Role::SellerAsMaker,
-            helloworld::Role::SellerAsTaker => Role::SellerAsTaker,
-            helloworld::Role::BuyerAsMaker => Role::BuyerAsMaker,
-            helloworld::Role::BuyerAsTaker => Role::BuyerAsTaker
+            helloworld::Role::SellerAsMaker => Self::SellerAsMaker,
+            helloworld::Role::SellerAsTaker => Self::SellerAsTaker,
+            helloworld::Role::BuyerAsMaker => Self::BuyerAsMaker,
+            helloworld::Role::BuyerAsTaker => Self::BuyerAsTaker
         }
     }
 }
 
 impl From<ProtocolErrorKind> for Status {
     fn from(value: ProtocolErrorKind) -> Self {
-        Status::internal(value.to_string())
+        Self::internal(value.to_string())
     }
 }
 
