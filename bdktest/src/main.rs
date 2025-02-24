@@ -1,5 +1,4 @@
 mod nigiri;
-mod musig_protocol;
 mod musig_adaptor_protocol;
 
 use anyhow::anyhow;
@@ -14,6 +13,7 @@ use bdk_wallet::{AddressInfo, KeychainKind, PersistedWallet, SignOptions, TxBuil
 use rand::RngCore;
 use std::collections::HashSet;
 use std::io::Write;
+use std::ops::Deref;
 use std::str::FromStr;
 
 const DESCRIPTOR_PRIVATE_EXTERNAL: &str = "tr(tprv8ZgxMBicQKsPejo7mjMzejAWDQYi1UtxzyxJfNbvtPqCsVFkZAEj7hnnrH938bXWMccgkj9BQmduhnmmjS41rAXE8atPLkLUadrXLUffpd8/86'/1'/0'/0/*)#w0y7v8y2";
@@ -434,4 +434,61 @@ impl ConnectedWallet {
         self.wallet.persist(&mut self.db)?;
         Ok(tx.compute_txid())
     }
+}
+struct Base {
+    id: u32,
+    name: String,
+}
+
+struct Extended {
+    base: Base,      // Composition
+    additional: String,
+}
+
+struct Extended2 {
+    ext: Extended,      // Composition
+    yas: String,
+}
+
+// Implement Deref to "inherit" behavior
+impl Deref for Extended {
+    type Target = Base;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+
+impl Deref for Extended2 {
+    type Target = Extended;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ext
+    }
+}
+#[test]
+fn test_deref() {
+    let extended = Extended {
+        base: Base {
+            id: 1,
+            name: "Base Struct".to_string(),
+        },
+        additional: "Extra Info".to_string(),
+    };
+
+    // Access fields of the base struct directly
+    println!("ID: {}, Name: {}", extended.id, extended.name); // Works because of Deref
+    let ex2 = Extended2 {
+        ext: Extended {
+            base: Base {
+                id: 2,
+                name: "Base 2".to_string(),
+            },
+            additional: "Extra 2".to_string(),
+        },
+        yas: "yet another string".to_string(),
+    };
+
+    // Access fields of the base struct directly
+    println!("ID: {}, Name: {}", ex2.id, ex2.name); // Works because of Deref
 }

@@ -1,81 +1,116 @@
-use crate::{ProtocolRole, TestWallet};
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::absolute::LockTime;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::hashes::sha256t::Hash;
 use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::{Address, Amount, FeeRate, Psbt, Sequence, TapSighashTag, Txid, Weight};
 use bdk_core::bitcoin::{Transaction, TxOut, Witness};
+use bdk_electrum::{electrum_client, BdkElectrumClient};
+use bdk_wallet::bitcoin::bip32::Xpriv;
 use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::bitcoin::sighash::{Prevouts, SighashCache};
 use bdk_wallet::bitcoin::taproot::Signature;
-use bdk_wallet::bitcoin::{absolute, transaction, KnownHrp, OutPoint, PublicKey, ScriptBuf, TapSighashType, TxIn};
+use bdk_wallet::bitcoin::{absolute, transaction, KnownHrp, Network, OutPoint, PublicKey, ScriptBuf, TapSighashType, TxIn};
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::miniscript::ToPublicKey;
-use bdk_wallet::{bitcoin, KeychainKind, SignOptions, TxBuilder};
+use bdk_wallet::template::{Bip86, DescriptorTemplate};
+use bdk_wallet::{bitcoin, AddressInfo, KeychainKind, SignOptions, TxBuilder, Wallet};
+use musig2::secp::{MaybeScalar, Point, Scalar};
 use musig2::{AdaptorSignature, AggNonce, KeyAggContext, LiftedSignature, PartialSignature, PubNonce, SecNonce, SecNonceBuilder};
-use rand::Rng;
-use secp::{MaybeScalar, Point, Scalar};
+use rand::{Rng, RngCore};
+use std::io::Write;
 use std::ops::Sub;
 
-/**
-This is not only testing code.
-It also shows how the Java FSM is supposed to call this library
-
-Of course the asserts do not need to be replicated in Java. Nor the Nigiri code.
-*/
-#[test]
-fn test_musig() -> anyhow::Result<()> {
-    println!("running...");
-    crate::nigiri::check_start();
-    let mut alice_funds = crate::nigiri::funded_wallet();
-    //TestWallet::new()?;
-
-    let bob_funds = crate::nigiri::funded_wallet();
-    //TestWallet::new()?;
-    crate::nigiri::fund_wallet(&mut alice_funds);
-    let seller_amount = &Amount::from_btc(1.4)?;
-    let buyer_amount = &Amount::from_btc(0.2)?;
-
-    // init protocol --------------------------
-    let alice_context = BMPContext::new(alice_funds, ProtocolRole::Seller, seller_amount.clone(), buyer_amount.clone())?;
-
-    let mut alice = BMPProtocol::new(alice_context)?;
-    let bob_context = BMPContext::new(bob_funds, ProtocolRole::Buyer, seller_amount.clone(), buyer_amount.clone())?;
-    let mut bob = BMPProtocol::new(bob_context)?;
-    crate::nigiri::tiktok();
-
-    // Round 1--------
-    let alice_response = alice.round1()?;
-    let bob_response = bob.round1()?;
-
-    // Round2 -------
-    let alice_r2 = alice.round2(bob_response)?;
-    let bob_r2 = bob.round2(alice_response)?;
-
-    println!("P2TR P' {}", alice.p_tik.get_agg_adr()?.to_string());
-    println!("P2TR Q' {}", alice.q_tik.get_agg_adr()?.to_string());
-
-    assert!(alice.get_p_tik_agg() == bob.get_p_tik_agg());
-    assert!(alice.q_tik.agg_point == bob.q_tik.agg_point);
-
-    // Round 3 ----------
-    let alice_r3 = alice.round3(bob_r2)?;
-    let bob_r3 = bob.round3(alice_r2)?;
-
-    assert_eq!(alice_r3.deposit_txid, bob_r3.deposit_txid);
-    dbg!(&alice_r3.deposit_txid);
-
-    // Round 4 ---------------------------
-    let alice_r4 = alice.round4(bob_r3)?;
-    let bob_r4 = bob.round4(alice_r3)?;
-
-    // Round 5 --------------------------
-    alice.round5(bob_r4)?;
-    bob.round5(alice_r4)?;
-
-
-    // done -----------------------------
-    crate::nigiri::tiktok();
-    Ok(())
+struct TestWallet {
+    wallet: Wallet,
+    client: BdkElectrumClient<electrum_client::Client>,
 }
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum ProtocolRole {
+    Seller,
+    Buyer,
+}
+// TODO think about stop_gap and batch_size
+const STOP_GAP: usize = 50;
+const BATCH_SIZE: usize = 5;
+const ELECTRUM_URL: &str =
+// "ssl://electrum.blockstream.info:60002";
+    "localhost:50000"; //TODO move to env
+impl TestWallet {
+    fn new() -> anyhow::Result<TestWallet> {
+        let mut seed: [u8; 32] = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut seed);
+
+        let network: Network = Network::Regtest;
+        let xprv: Xpriv = Xpriv::new_master(network, &seed)?;
+        println!("Generated Master Private Key:\n{}\nWarning: be very careful with private keys when using MainNet! We are logging these values for convenience only because this is an example on RegTest.\n", xprv);
+
+        let (descriptor, external_map, _) = Bip86(xprv, KeychainKind::External)
+            .build(network)
+            .expect("Failed to build external descriptor");
+
+        let (change_descriptor, internal_map, _) = Bip86(xprv, KeychainKind::Internal)
+            .build(network)
+            .expect("Failed to build internal descriptor");
+
+        let wallet = Wallet::create(descriptor, change_descriptor)
+            .network(network)
+            .keymap(KeychainKind::External, external_map)
+            .keymap(KeychainKind::Internal, internal_map)
+            .create_wallet_no_persist()?;
+        let client = BdkElectrumClient::new(electrum_client::Client::new(ELECTRUM_URL)?);
+
+        Ok(TestWallet { wallet, client })
+    }
+
+    fn sync(&mut self) -> anyhow::Result<()> {
+        // Populate the electrum client's transaction cache so it doesn't redownload transaction we
+        // already have.
+        self.client
+            .populate_tx_cache(self.wallet.tx_graph().full_txs().map(|tx_node| tx_node.tx));
+
+        let request = self.wallet.start_full_scan().inspect({
+            let mut stdout = std::io::stdout();
+            // let mut once = HashSet::<KeychainKind>::new();
+            move |_k, _spk_i, _| {
+                // if once.insert(k) {
+                //     print!("\nScanning keychain [{:?}]", k);
+                // }
+                // print!(" {:<3}", spk_i);
+                stdout.flush().expect("must flush");
+            }
+        });
+        eprintln!("requesting update...");
+        let update = self
+            .client
+            .full_scan(request, STOP_GAP, BATCH_SIZE, false)?;
+        self.wallet.apply_update(update)?;
+        Ok(())
+    }
+
+    fn balance(&self) -> Amount {
+        self.wallet.balance().trusted_spendable()
+    }
+
+    fn next_unused_address(&mut self) -> AddressInfo {
+        self.wallet.next_unused_address(KeychainKind::External)
+    }
+
+    fn transfer_to_address(
+        &mut self,
+        address: AddressInfo,
+        amount: Amount,
+    ) -> anyhow::Result<Txid> {
+        let mut tx_builder = self.wallet.build_tx();
+        tx_builder.add_recipient(address.script_pubkey(), amount);
+
+        let mut psbt = tx_builder.finish()?;
+        let finalized = self.wallet.sign(&mut psbt, SignOptions::default())?;
+        assert!(finalized);
+
+        let tx = psbt.extract_tx()?;
+        self.client.transaction_broadcast(&tx)?;
+        Ok(tx.compute_txid())
+    }
+}
+
 pub struct Round1Parameter {
     // DepositTx --------
     p_a: Point,
@@ -549,7 +584,11 @@ struct AggKey {
 
 impl AggKey {
     fn new() -> anyhow::Result<AggKey> {
-        let sec: Scalar = Scalar::random(&mut rand::thread_rng());
+        //TODO is this random sufficient?
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill(&mut seed);
+
+        let sec: Scalar = Scalar::from_slice(&seed)?;
         let point = sec.base_point_mul();
         // let pubkey = PublicKey::from_slice(&*(point.serialize()))?;
         Ok(AggKey { sec, other_sec: None, agg_sec: None, pub_point: point, other_point: None, agg_point: None, key_agg_context: None })
@@ -895,4 +934,9 @@ impl Merge for TxBuilder<'_, BranchAndBoundCoinSelection> {
         }
         Ok(total)
     }
+}
+
+#[test]
+fn sometest() {
+    println!("Hello, world!");
 }
