@@ -34,7 +34,7 @@ fn test_musig() -> anyhow::Result<()> {
     let seller_amount = &Amount::from_btc(1.4)?;
     let buyer_amount = &Amount::from_btc(0.2)?;
 
-    // init protocol --------------------------
+    // init p3 --------------------------
     let alice_context = BMPContext::new(alice_funds, ProtocolRole::Seller, seller_amount.clone(), buyer_amount.clone())?;
 
     let mut alice = BMPProtocol::new(alice_context)?;
@@ -256,7 +256,7 @@ impl BMPProtocol {
     }
 }
 /**
-Only the seller gets a SwapTx, this is the only asymmetric part of the protocol
+Only the seller gets a SwapTx, this is the only asymmetric part of the p3
 */
 struct SwapTx {
     role: ProtocolRole, // this transaction is only for Alice, however even Bob will construct it for signing.

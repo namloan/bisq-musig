@@ -21,7 +21,7 @@ struct TestWallet {
     client: BdkElectrumClient<electrum_client::Client>,
 }
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum ProtocolRole {
+pub enum ProtocolRole {
     Seller,
     Buyer,
 }
@@ -111,33 +111,33 @@ impl TestWallet {
 
 pub struct Round1Parameter {
     // DepositTx --------
-    p_a: Point,
-    q_a: Point,
-    dep_part_psbt: Psbt,
+    pub(crate) p_a: Point,
+    pub(crate) q_a: Point,
+    pub(crate) dep_part_psbt: Psbt,
     // Swap Tx -----
     // public nounce
     // Seller address where to send the swap amount to
-    swap_script: Option<ScriptBuf>, // only set from Seller
+    pub(crate) swap_script: Option<ScriptBuf>, // only set from Seller
 }
 pub(crate) struct Round2Parameter {
     // DepositTx --------
-    p_agg: Point,
-    q_agg: Point,
-    deposit_tx_signed: Psbt,
+    pub(crate) p_agg: Point,
+    pub(crate) q_agg: Point,
+    pub(crate) deposit_tx_signed: Psbt,
     // SwapTx --------------
     // partial adaptive  signature for SwapTx
-    swap_pub_nonce: PubNonce,
+    pub(crate) swap_pub_nonce: PubNonce,
 }
 pub(crate) struct Round3Parameter {
     // DepositTx --------
-    deposit_txid: Txid, // only for verification / fast fail
+    pub(crate) deposit_txid: Txid, // only for verification / fast fail
     // SwapTx --------------
     // aggregated adaptive signature for SwapTx,
 
-    swap_part_sig: PartialSignature,
+    pub(crate) swap_part_sig: PartialSignature,
 }
 pub(crate) struct Round4Parameter {
-    swap_onchain: Option<Transaction>,
+    pub(crate) swap_onchain: Option<Transaction>,
 }
 /**
 this context is for the whole process and need to be persisted by the caller
@@ -289,7 +289,7 @@ impl BMPProtocol {
     }
 }
 /**
-Only the seller gets a SwapTx, this is the only asymmetric part of the protocol
+Only the seller gets a SwapTx, this is the only asymmetric part of the p3
 */
 struct SwapTx {
     role: ProtocolRole, // this transaction is only for Alice, however even Bob will construct it for signing.

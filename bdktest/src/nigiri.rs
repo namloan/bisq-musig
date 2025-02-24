@@ -36,7 +36,7 @@ use bdk_wallet::{
     KeychainKind, PersistedWallet, Wallet,
 };
 
-/** run protocol as library
+/** run p3 as library
 using security by identical generation
 */
 #[test]
