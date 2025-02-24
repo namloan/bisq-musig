@@ -1,13 +1,11 @@
-use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::absolute::LockTime;
-use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::hashes::sha256t::Hash;
-use bdk_bitcoind_rpc::bitcoincore_rpc::bitcoin::{Address, Amount, FeeRate, Psbt, Sequence, TapSighashTag, Txid, Weight};
-use bdk_core::bitcoin::{Transaction, TxOut, Witness};
 use bdk_electrum::{electrum_client, BdkElectrumClient};
+use bdk_wallet::bitcoin::absolute::LockTime;
 use bdk_wallet::bitcoin::bip32::Xpriv;
+use bdk_wallet::bitcoin::hashes::sha256t::Hash;
 use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::bitcoin::sighash::{Prevouts, SighashCache};
 use bdk_wallet::bitcoin::taproot::Signature;
-use bdk_wallet::bitcoin::{absolute, transaction, KnownHrp, Network, OutPoint, PublicKey, ScriptBuf, TapSighashType, TxIn};
+use bdk_wallet::bitcoin::{absolute, transaction, Address, Amount, FeeRate, KnownHrp, Network, OutPoint, Psbt, PublicKey, ScriptBuf, Sequence, TapSighashTag, TapSighashType, Transaction, TxIn, TxOut, Txid, Weight, Witness};
 use bdk_wallet::coin_selection::BranchAndBoundCoinSelection;
 use bdk_wallet::miniscript::ToPublicKey;
 use bdk_wallet::template::{Bip86, DescriptorTemplate};
@@ -838,7 +836,7 @@ impl TMuSig2 {
         Ok(schnorr_sig)
     }
 
-    fn extract_message_from_tx(input_index: usize, prevouts: &Vec<TxOut>, unsigned_tx: &Transaction) -> Hash<TapSighashTag> {
+    fn extract_message_from_tx(input_index: usize, prevouts: &Vec<TxOut>, unsigned_tx: &Transaction) -> bdk_wallet::bitcoin::hashes::sha256t::Hash<TapSighashTag> {
         let sighash_type = TapSighashType::Default; // we are using in Musig only Default which is effectively equiv. to SIGHASH_ALL
         let prevouts = Prevouts::All(&prevouts);
 
