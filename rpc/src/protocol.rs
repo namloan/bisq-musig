@@ -6,7 +6,7 @@ use std::prelude::rust_2021::*;
 use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
-use crate::storage::{ByRef, ByVal, Storage};
+use crate::storage::{ByRef, ByVal, ByOptVal, Storage, ValStorage};
 
 pub trait TradeModelStore {
     fn add_trade_model(&self, trade_model: TradeModel);
@@ -83,9 +83,9 @@ pub enum SwapTxInputScalar<'a, S: Storage> {
 
 pub type Adaptor = MaybeScalar;
 
-pub struct KeyPair {
+pub struct KeyPair<PrvKey: ValStorage = ByVal> {
     pub pub_key: Point,
-    pub prv_key: Scalar,
+    pub prv_key: PrvKey::Store<Scalar>,
 }
 
 pub struct NoncePair {
@@ -97,8 +97,8 @@ pub struct NoncePair {
 struct KeyCtx {
     am_buyer: bool,
     my_key_share: Option<KeyPair>,
-    peers_key_share: Option<Point>,
-    aggregated_pub_key: Option<Point>,
+    peers_key_share: Option<KeyPair<ByOptVal>>,
+    aggregated_key: Option<KeyPair<ByOptVal>>,
     key_agg_ctx: Option<KeyAggContext>,
 }
 
@@ -149,8 +149,8 @@ impl TradeModel {
     }
 
     pub fn set_peer_key_shares(&mut self, buyer_output_pub_key: Point, seller_output_pub_key: Point) {
-        self.buyer_output_key_ctx.peers_key_share = Some(buyer_output_pub_key);
-        self.seller_output_key_ctx.peers_key_share = Some(seller_output_pub_key);
+        self.buyer_output_key_ctx.peers_key_share = Some(KeyPair::from_public(buyer_output_pub_key));
+        self.seller_output_key_ctx.peers_key_share = Some(KeyPair::from_public(seller_output_pub_key));
     }
 
     pub fn aggregate_key_shares(&mut self) -> Result<()> {
@@ -307,10 +307,15 @@ impl TradeModel {
         Ok(())
     }
 
-    #[expect(clippy::unnecessary_wraps, reason = "unfinished; runtime errors are expected")]
     pub fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) -> Result<()> {
+        if self.am_buyer() {
+            let adaptor = self.swap_tx_input_adaptor
+                .ok_or(ProtocolErrorKind::MissingAdaptor)?;
+            self.seller_output_key_ctx.peers_key_share.as_mut()
+                .ok_or(ProtocolErrorKind::MissingKeyShare)?
+                .set_prv_key((adaptor - sig).try_into()?)?;
+        }
         self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
-        // TODO: If buyer, apply adaptor to determine the seller's private key share on the buyer output.
         Ok(())
     }
 
@@ -334,19 +339,47 @@ impl TradeModel {
         Some(&peer_key_ctx.my_key_share.as_ref()?.prv_key)
     }
 
-    #[expect(clippy::unnecessary_wraps, clippy::unused_self, reason = "unfinished; runtime errors are expected")]
-    pub fn set_peer_private_key_share_for_my_output(&mut self, _prv_key_share: Scalar) -> Result<()> {
-        // TODO: Implement.
+    //noinspection RsSelfConvention
+    fn get_my_key_ctx_mut(&mut self) -> &mut KeyCtx {
+        if self.am_buyer() {
+            &mut self.buyer_output_key_ctx
+        } else {
+            &mut self.seller_output_key_ctx
+        }
+    }
+
+    pub fn set_peer_private_key_share_for_my_output(&mut self, prv_key_share: Scalar) -> Result<()> {
+        self.get_my_key_ctx_mut().peers_key_share.as_mut()
+            .ok_or(ProtocolErrorKind::MissingKeyShare)?
+            .set_prv_key(prv_key_share)?;
         Ok(())
+    }
+
+    pub fn aggregate_private_keys_for_my_output(&mut self) -> Result<&Scalar> {
+        self.get_my_key_ctx_mut().aggregate_prv_key_shares()
     }
 }
 
 impl KeyPair {
     fn new() -> Self {
-        Self {
-            pub_key: Scalar::one().base_point_mul(),
-            prv_key: Scalar::one(),
+        Self::from_private(Scalar::one())
+    }
+
+    fn from_private(prv_key: Scalar) -> Self {
+        Self { pub_key: prv_key.base_point_mul(), prv_key }
+    }
+}
+
+impl KeyPair<ByOptVal> {
+    const fn from_public(pub_key: Point) -> Self {
+        Self { pub_key, prv_key: None }
+    }
+
+    fn set_prv_key(&mut self, prv_key: Scalar) -> Result<&Scalar> {
+        if self.pub_key != prv_key.base_point_mul() {
+            return Err(ProtocolErrorKind::MismatchedKeyPair);
         }
+        Ok(self.prv_key.insert(prv_key))
     }
 }
 
@@ -367,26 +400,44 @@ impl KeyCtx {
 
     fn get_key_shares(&self) -> Option<[Point; 2]> {
         Some(if self.am_buyer {
-            [self.my_key_share.as_ref()?.pub_key, self.peers_key_share?]
+            [self.my_key_share.as_ref()?.pub_key, self.peers_key_share.as_ref()?.pub_key]
         } else {
-            [self.peers_key_share?, self.my_key_share.as_ref()?.pub_key]
+            [self.peers_key_share.as_ref()?.pub_key, self.my_key_share.as_ref()?.pub_key]
         })
     }
 
     fn aggregate_key_shares(&mut self) -> Result<()> {
         let agg_ctx = KeyAggContext::new(self.get_key_shares()
             .ok_or(ProtocolErrorKind::MissingKeyShare)?)?;
-        self.aggregated_pub_key = Some(agg_ctx.aggregated_pubkey());
+        self.aggregated_key = Some(KeyPair::from_public(agg_ctx.aggregated_pubkey()));
         self.key_agg_ctx = Some(agg_ctx);
         Ok(())
+    }
+
+    fn get_prv_key_shares(&self) -> Option<[Scalar; 2]> {
+        Some(if self.am_buyer {
+            [self.my_key_share.as_ref()?.prv_key, self.peers_key_share.as_ref()?.prv_key?]
+        } else {
+            [self.peers_key_share.as_ref()?.prv_key?, self.my_key_share.as_ref()?.prv_key]
+        })
+    }
+
+    fn aggregate_prv_key_shares(&mut self) -> Result<&Scalar> {
+        let prv_key_shares = self.get_prv_key_shares()
+            .ok_or(ProtocolErrorKind::MissingKeyShare)?;
+        let agg_ctx = self.key_agg_ctx.as_ref()
+            .ok_or(ProtocolErrorKind::MissingAggPubKey)?;
+        let agg_key = self.aggregated_key.as_mut()
+            .ok_or(ProtocolErrorKind::MissingAggPubKey)?;
+        agg_key.set_prv_key(agg_ctx.aggregated_seckey(prv_key_shares)?)
     }
 }
 
 impl SigCtx {
     fn init_my_nonce_share(&mut self, key_ctx: &KeyCtx) -> Result<()> {
         // FIXME: Obtains a fixed nonce share -- must pass a _random_ seed data source to the constructor.
-        let aggregated_pub_key = key_ctx.aggregated_pub_key
-            .ok_or(ProtocolErrorKind::MissingAggPubKey)?;
+        let aggregated_pub_key = key_ctx.aggregated_key.as_ref()
+            .ok_or(ProtocolErrorKind::MissingAggPubKey)?.pub_key;
         self.my_nonce_share = Some(NoncePair::new([0; 32], aggregated_pub_key));
         Ok(())
     }
@@ -457,13 +508,19 @@ pub enum ProtocolErrorKind {
     MissingNonceShare,
     #[error("missing partial signature")]
     MissingPartialSig,
+    #[error("missing adaptor")]
+    MissingAdaptor,
     #[error("missing aggregated pubkey")]
     MissingAggPubKey,
     #[error("missing aggregated nonce")]
     MissingAggNonce,
     #[error("nonce has already been used")]
     NonceReuse,
+    #[error("public-private key mismatch")]
+    MismatchedKeyPair,
     KeyAgg(#[from] musig2::errors::KeyAggError),
     Signing(#[from] musig2::errors::SigningError),
     Verify(#[from] musig2::errors::VerifyError),
+    InvalidSecretKeys(#[from] musig2::errors::InvalidSecretKeysError),
+    ZeroScalar(#[from] secp::errors::ZeroScalarError),
 }

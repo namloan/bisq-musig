@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::prelude::rust_2021::*;
 
 /// A simple utility trait to allow structs to be polymorphic over the storage type of their fields,
 /// to facilitate passing data to and from functions by reference or value, decided statically for
@@ -8,11 +9,20 @@ pub trait Storage {
     type Store<'a, T: 'a>;
 }
 
+/// Similar trait to [`Storage`] but for struct fields holding values only. This avoids having to
+/// include a lifetime parameter in its [`Self::Store`] GAT.
+pub trait ValStorage {
+    type Store<T>;
+}
+
 /// Hold the struct fields by reference.
 pub struct ByRef(Infallible);
 
 /// Hold the struct fields by value.
 pub struct ByVal(Infallible);
+
+/// Hold the struct fields by Option-wrapped value.
+pub struct ByOptVal(Infallible);
 
 impl Storage for ByRef {
     // It isn't ideal to make the lifetime a type parameter here, instead of making it a parameter
@@ -23,4 +33,16 @@ impl Storage for ByRef {
 
 impl Storage for ByVal {
     type Store<'a, T: 'a> = T;
+}
+
+impl ValStorage for ByVal {
+    type Store<T> = T;
+}
+
+impl Storage for ByOptVal {
+    type Store<'a, T: 'a> = Option<T>;
+}
+
+impl ValStorage for ByOptVal {
+    type Store<T> = Option<T>;
 }

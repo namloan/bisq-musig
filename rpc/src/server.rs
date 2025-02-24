@@ -255,6 +255,7 @@ impl MuSig for MyMuSig {
         let mut trade_model = trade_model.lock().unwrap();
         if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
             trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
+            trade_model.aggregate_private_keys_for_my_output()?;
         } else {
             // TODO: *** BROADCAST SWAP TX ***
         }
