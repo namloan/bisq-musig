@@ -1,40 +1,23 @@
 // Bitcoin and BDK-related imports
-use crate::{
-    build_and_merge_tx, generate_part_tx, transfer_sig_and_broadcast, ConnectedWallet, DepositTx,
-    ProtocolRole, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL, DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
-};
-// External crates
-use dotenv::dotenv;
-use rand::RngCore;
-use std::process::Output;
-use std::{collections::HashMap, env, error::Error, process::Command, str::FromStr, thread, time};
 
-use bdk_core::bitcoin::Network::Bitcoin;
+// External crates
+use std::process::Output;
+use std::{collections::HashMap, process::Command, str::FromStr, thread, time};
+
+use crate::{TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL, DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP};
+use bdk_core::bitcoin::Address;
 use bdk_core::{
     bitcoin::{
-        self,
-        secp256k1::{Keypair, Secp256k1, XOnlyPublicKey},
-        Amount, Network, Txid, WitnessVersion,
+        secp256k1::XOnlyPublicKey,
+        Amount, Network,
     },
     spk_client::{FullScanRequestBuilder, SyncRequestBuilder},
 };
-use bdk_electrum::{electrum_client, BdkElectrumClient};
 use bdk_esplora::esplora_client::Builder;
 use bdk_esplora::{esplora_client, EsploraExt};
-use bdk_wallet::bitcoin::key::TapTweak;
-use bdk_wallet::bitcoin::KnownHrp;
-use bdk_wallet::miniscript::{translate_hash_fail, Tap, ToPublicKey};
+use bdk_wallet::miniscript::{translate_hash_fail, Translator};
 use bdk_wallet::rusqlite::Connection;
-use bdk_wallet::{
-    bitcoin::{bip32::Xpriv, Address},
-    miniscript::{
-        descriptor::DescriptorType, policy::Concrete, Descriptor, DescriptorPublicKey, Miniscript,
-        TranslatePk, Translator,
-    },
-    serde_json,
-    template::{Bip86, DescriptorTemplate},
-    KeychainKind, PersistedWallet, Wallet,
-};
+use bdk_wallet::{KeychainKind, PersistedWallet, Wallet};
 
 /** run p3 as library
 using security by identical generation
