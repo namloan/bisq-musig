@@ -16,7 +16,7 @@ use rand::{Rng, RngCore};
 use std::io::Write;
 use std::ops::Sub;
 
-struct TestWallet {
+pub struct TestWallet {
     wallet: Wallet,
     client: BdkElectrumClient<electrum_client::Client>,
 }
@@ -32,7 +32,7 @@ const ELECTRUM_URL: &str =
 // "ssl://electrum.blockstream.info:60002";
     "localhost:50000"; //TODO move to env
 impl TestWallet {
-    fn new() -> anyhow::Result<TestWallet> {
+    pub(crate) fn new() -> anyhow::Result<TestWallet> {
         let mut seed: [u8; 32] = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut seed);
 
@@ -58,7 +58,7 @@ impl TestWallet {
         Ok(TestWallet { wallet, client })
     }
 
-    fn sync(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn sync(&mut self) -> anyhow::Result<()> {
         // Populate the electrum client's transaction cache so it doesn't redownload transaction we
         // already have.
         self.client
@@ -83,11 +83,11 @@ impl TestWallet {
         Ok(())
     }
 
-    fn balance(&self) -> Amount {
+    pub(crate) fn balance(&self) -> Amount {
         self.wallet.balance().trusted_spendable()
     }
 
-    fn next_unused_address(&mut self) -> AddressInfo {
+    pub(crate) fn next_unused_address(&mut self) -> AddressInfo {
         self.wallet.next_unused_address(KeychainKind::External)
     }
 
@@ -151,8 +151,8 @@ pub struct BMPContext {
 }
 pub struct BMPProtocol {
     ctx: BMPContext,
-    p_tik: AggKey, // Point securing Seller deposit and trade amount
-    q_tik: AggKey, // Point securing Buyer deposit
+    pub(crate) p_tik: AggKey, // Point securing Seller deposit and trade amount
+    pub(crate) q_tik: AggKey, // Point securing Buyer deposit
     deposit_tx: DepositTx,
     round: u8, // which round are we in.
     swap_tx: SwapTx,
@@ -570,18 +570,18 @@ MuSig2 interaction, it represents the Key not only our side of the equation
 
 #[derive(PartialEq, Clone)]
 #[derive(Debug)]
-struct AggKey {
+pub struct AggKey {
     sec: Scalar,
     other_sec: Option<Scalar>,
     agg_sec: Option<Scalar>,
     pub_point: Point,
     other_point: Option<Point>,
-    agg_point: Option<Point>,
+    pub(crate) agg_point: Option<Point>,
     key_agg_context: Option<KeyAggContext>,
 }
 
 impl AggKey {
-    fn new() -> anyhow::Result<AggKey> {
+    pub fn new() -> anyhow::Result<AggKey> {
         //TODO is this random sufficient?
         let mut seed = [0u8; 32];
         rand::thread_rng().fill(&mut seed);
@@ -592,7 +592,7 @@ impl AggKey {
         Ok(AggKey { sec, other_sec: None, agg_sec: None, pub_point: point, other_point: None, agg_point: None, key_agg_context: None })
     }
 
-    fn aggregate_key(&mut self, point_from_bob: Point) -> anyhow::Result<Point> {
+    pub fn aggregate_key(&mut self, point_from_bob: Point) -> anyhow::Result<Point> {
         assert_ne!(point_from_bob, self.pub_point, "Bob is sending my point back.");
         // order of pubkeys must be the same as order of secret keys.
         // we use the smaller pubkey-value first. see reveal_other for secret keys.
@@ -610,7 +610,7 @@ impl AggKey {
     }
 
     // check https://bitcoin.stackexchange.com/questions/116384/what-are-the-steps-to-convert-a-private-key-to-a-taproot-address
-    fn get_agg_adr(&self) -> anyhow::Result<Address> {
+    pub(crate) fn get_agg_adr(&self) -> anyhow::Result<Address> {
         self.agg_point.unwrap().key_spend_no_merkle_address()
     }
 }
@@ -621,7 +621,7 @@ round n: new(agg_key) -> pub_nonce
 round n+1: generate partial adapted sig -> part-sig
 round n+2: aggregate sig (and publish)
 */
-struct TMuSig2 {
+pub struct TMuSig2 {
     agg_key: AggKey,
     sec_nonce: SecNonce,
     pub_nonce: PubNonce,
@@ -630,7 +630,7 @@ struct TMuSig2 {
     adaptor_sig: Option<Adaptor>,
 }
 
-struct Adaptor {
+pub struct Adaptor {
     partial_sig: PartialSignature,
     input_index: usize, // which input in our transaction is going to use this signature?
     pub_adaptor: Point, // this is the image for which the other party must provide the pre-image in order to use this sig.
@@ -639,7 +639,7 @@ struct Adaptor {
 }
 
 impl TMuSig2 {
-    fn new(agg_key: AggKey) -> TMuSig2 {
+    pub fn new(agg_key: AggKey) -> TMuSig2 {
         // there must be the aggregated key at this point
         assert!(agg_key.agg_point.is_some());
         let mut seed = [0u8; 32];
@@ -655,13 +655,13 @@ impl TMuSig2 {
         TMuSig2 { agg_key, sec_nonce, pub_nonce, agg_nonce: None, other_nonce: None, adaptor_sig: None }
     }
 
-    fn generate_adapted_partial_sig(&mut self,
-                                    input_index: usize, // which input in our transaction is going to use this signature?
-                                    pub_adaptor: Point, // this is the image for which the other party must provide the pre-image in order to use this sig.
-                                    other_nonce: PubNonce, // the public nonce from the other side to calc the aggregated nonce
-                                    prevouts: &Vec<TxOut>, // the TxOuts from the previous transaction is part of the sig-alg in taproot
-                                    tx: &Transaction) // the current transaction which needs the signature
-                                    -> anyhow::Result<PartialSignature> { // the partial transaction with adaptor to be sent to the other party.
+    pub fn generate_adapted_partial_sig(&mut self,
+                                        input_index: usize, // which input in our transaction is going to use this signature?
+                                        pub_adaptor: Point, // this is the image for which the other party must provide the pre-image in order to use this sig.
+                                        other_nonce: PubNonce, // the public nonce from the other side to calc the aggregated nonce
+                                        prevouts: &Vec<TxOut>, // the TxOuts from the previous transaction is part of the sig-alg in taproot
+                                        tx: &Transaction) // the current transaction which needs the signature
+                                        -> anyhow::Result<PartialSignature> { // the partial transaction with adaptor to be sent to the other party.
         // calculate aggregated nonce first.
         // TODO, how to make sure we have the correct ordering of partial nonces?
         let mut total_nonce = [self.pub_nonce.clone(), other_nonce.clone()];
@@ -710,7 +710,7 @@ impl TMuSig2 {
     this is probably only called by Alice, the seller as the swapTx is only contructed by her.
     the aggregated sig is still not valid, needs to be adapted.
     */
-    fn aggregate_sigs(&mut self, other_sig: PartialSignature) -> anyhow::Result<()> {
+    pub fn aggregate_sigs(&mut self, other_sig: PartialSignature) -> anyhow::Result<()> {
         let my_adaptor = self.adaptor_sig.as_mut().unwrap();
         // TODO verify other_sig, this is strictly not neccessary but fail fast is always good
         //         musig2::signing::verify_partial_adaptor() why is signing module private
@@ -756,7 +756,7 @@ impl TMuSig2 {
 
         Ok(())
     }
-    fn sign(&mut self, sec_adaptor: Scalar, tx: Transaction) -> anyhow::Result<Transaction> {
+    pub fn sign(&mut self, sec_adaptor: Scalar, tx: Transaction) -> anyhow::Result<Transaction> {
         let my_adaptor = self.adaptor_sig.as_mut().unwrap();
         // Decrypt the signature with the adaptor secret.
         let valid_signature: LiftedSignature = my_adaptor.adaptor_signature.unwrap()
@@ -783,7 +783,7 @@ impl TMuSig2 {
     /**
     Now let say Alice has posted the SwapTx, then Bob wants to reveal the secret for the public adaptor from the Transaction.
     */
-    fn reveal(&self, final_sig: &Signature) -> anyhow::Result<Scalar> {
+    pub fn reveal(&self, final_sig: &Signature) -> anyhow::Result<Scalar> {
         // LiftedSignature::from_bytes(Sign)
         let sig = self.adaptor_sig.as_ref().unwrap().adaptor_signature.unwrap();
         let lifted_sig = &LiftedSignature::from_bytes(final_sig.serialize().as_ref())?;
@@ -792,7 +792,7 @@ impl TMuSig2 {
         Ok(sec_adaptor)
     }
 
-    fn reveal2other(&self, final_sig: &Signature, tik: &mut AggKey) -> anyhow::Result<()> {
+    pub fn reveal2other(&self, final_sig: &Signature, tik: &mut AggKey) -> anyhow::Result<()> {
         let sec_adaptor = self.reveal(final_sig)?;
         tik.other_sec = Some(sec_adaptor);
         // calculate combined key as well.
@@ -808,7 +808,7 @@ impl TMuSig2 {
         // TODO shall we check here if the aggregated secret key actually works?
         Ok(())
     }
-    fn extract_p2tr_key_path_signature(tx: &Transaction, input_index: usize) -> anyhow::Result<Signature> {
+    pub fn extract_p2tr_key_path_signature(tx: &Transaction, input_index: usize) -> anyhow::Result<Signature> {
         // Ensure the input index is valid
         if input_index >= tx.input.len() {
             anyhow::bail!("Invalid input index: {}", input_index);
@@ -836,7 +836,7 @@ impl TMuSig2 {
         Ok(schnorr_sig)
     }
 
-    fn extract_message_from_tx(input_index: usize, prevouts: &Vec<TxOut>, unsigned_tx: &Transaction) -> bdk_wallet::bitcoin::hashes::sha256t::Hash<TapSighashTag> {
+    pub fn extract_message_from_tx(input_index: usize, prevouts: &Vec<TxOut>, unsigned_tx: &Transaction) -> bdk_wallet::bitcoin::hashes::sha256t::Hash<TapSighashTag> {
         let sighash_type = TapSighashType::Default; // we are using in Musig only Default which is effectively equiv. to SIGHASH_ALL
         let prevouts = Prevouts::All(&prevouts);
 

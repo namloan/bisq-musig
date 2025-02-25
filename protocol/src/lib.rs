@@ -1,22 +1,22 @@
 mod protocol_musig_adaptor;
+mod nigiri;
 
 #[cfg(test)]
 mod tests {
+    use crate::nigiri;
     use crate::protocol_musig_adaptor::{BMPContext, BMPProtocol, ProtocolRole};
     use bdk_electrum::bdk_core::bitcoin::Amount;
 
     #[test]
-    fn it_works() {}
-
     fn test_musig() -> anyhow::Result<()> {
         println!("running...");
-        crate::nigiri::check_start();
-        let mut alice_funds = crate::nigiri::funded_wallet();
+        nigiri::check_start();
+        let mut alice_funds = nigiri::funded_wallet();
         //TestWallet::new()?;
 
-        let bob_funds = crate::nigiri::funded_wallet();
+        let bob_funds = nigiri::funded_wallet();
         //TestWallet::new()?;
-        crate::nigiri::fund_wallet(&mut alice_funds);
+        nigiri::fund_wallet(&mut alice_funds);
         let seller_amount = &Amount::from_btc(1.4)?;
         let buyer_amount = &Amount::from_btc(0.2)?;
 
