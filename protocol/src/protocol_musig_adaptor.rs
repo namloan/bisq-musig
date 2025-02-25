@@ -16,7 +16,7 @@ use rand::{Rng, RngCore};
 use std::io::Write;
 use std::ops::Sub;
 
-pub struct TestWallet {
+pub struct MemWallet {
     wallet: Wallet,
     client: BdkElectrumClient<electrum_client::Client>,
 }
@@ -31,8 +31,8 @@ const BATCH_SIZE: usize = 5;
 const ELECTRUM_URL: &str =
 // "ssl://electrum.blockstream.info:60002";
     "localhost:50000"; //TODO move to env
-impl TestWallet {
-    pub(crate) fn new() -> anyhow::Result<TestWallet> {
+impl MemWallet {
+    pub(crate) fn new() -> anyhow::Result<MemWallet> {
         let mut seed: [u8; 32] = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut seed);
 
@@ -55,7 +55,7 @@ impl TestWallet {
             .create_wallet_no_persist()?;
         let client = BdkElectrumClient::new(electrum_client::Client::new(ELECTRUM_URL)?);
 
-        Ok(TestWallet { wallet, client })
+        Ok(MemWallet { wallet, client })
     }
 
     pub(crate) fn sync(&mut self) -> anyhow::Result<()> {
@@ -144,7 +144,7 @@ this context is for the whole process and need to be persisted by the caller
 */
 pub struct BMPContext {
     // first of all, everything which is general to the protcol itself
-    funds: TestWallet,
+    funds: MemWallet,
     role: ProtocolRole,
     seller_amount: Amount,
     buyer_amount: Amount,
@@ -159,7 +159,7 @@ pub struct BMPProtocol {
 }
 
 impl BMPContext {
-    pub(crate) fn new(funds: TestWallet, role: ProtocolRole, seller_amount: Amount, buyer_amount: Amount) -> anyhow::Result<BMPContext> {
+    pub(crate) fn new(funds: MemWallet, role: ProtocolRole, seller_amount: Amount, buyer_amount: Amount) -> anyhow::Result<BMPContext> {
         Ok(BMPContext {
             funds,
             role,

@@ -1,18 +1,18 @@
 // Bitcoin and BDK-related imports
 
-use crate::protocol_musig_adaptor::TestWallet;
+use crate::protocol_musig_adaptor::MemWallet;
 use bdk_wallet::bitcoin::Amount;
 use bdk_wallet::miniscript::TranslatePk;
 use std::process::Output;
 use std::{process::Command, thread, time};
 
-pub(crate) fn funded_wallet() -> TestWallet {
+pub(crate) fn funded_wallet() -> MemWallet {
     println!("loading wallet...");
-    let mut wallet = TestWallet::new().unwrap();
+    let mut wallet = MemWallet::new().unwrap();
     fund_wallet(&mut wallet);
     wallet
 }
-pub(crate) fn fund_wallet(wallet: &mut TestWallet) {
+pub(crate) fn fund_wallet(wallet: &mut MemWallet) {
     let initial_balance = wallet.balance();
     // load some more coin to wallet
     let adr = wallet.next_unused_address().to_string();
