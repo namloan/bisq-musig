@@ -1,6 +1,7 @@
-use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignature, PubNonce,
-    SecNonce, SecNonceBuilder};
-use secp::{Point, MaybeScalar, Scalar};
+use musig2::{AggNonce, KeyAggContext, NonceSeed, PartialSignature, PubNonce, SecNonce,
+    SecNonceBuilder};
+use musig2::adaptor::AdaptorSignature;
+use secp::{MaybePoint, Point, Scalar};
 use std::collections::BTreeMap;
 use std::prelude::rust_2021::*;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -39,7 +40,6 @@ pub struct TradeModel {
     pub prepared_tx_fee_rate: Option<f64>,
     buyer_output_key_ctx: KeyCtx,
     seller_output_key_ctx: KeyCtx,
-    swap_tx_input_adaptor: Option<Adaptor>,
     swap_tx_input_sig_ctx: SigCtx,
     buyers_warning_tx_buyer_input_sig_ctx: SigCtx,
     buyers_warning_tx_seller_input_sig_ctx: SigCtx,
@@ -69,19 +69,14 @@ pub struct ExchangedNonces<'a, S: Storage> {
     pub sellers_redirect_tx_input_nonce_share: S::Store<'a, PubNonce>,
 }
 
+#[expect(clippy::struct_field_names,
+reason = "not sure removing common postfix would make things clearer")] // TODO: Consider further.
 pub struct ExchangedSigs<'a, S: Storage> {
     pub peers_warning_tx_buyer_input_partial_signature: S::Store<'a, PartialSignature>,
     pub peers_warning_tx_seller_input_partial_signature: S::Store<'a, PartialSignature>,
     pub peers_redirect_tx_input_partial_signature: S::Store<'a, PartialSignature>,
-    pub swap_tx_input_scalar: Option<SwapTxInputScalar<'a, S>>,
+    pub swap_tx_input_partial_signature: Option<S::Store<'a, PartialSignature>>,
 }
-
-pub enum SwapTxInputScalar<'a, S: Storage> {
-    BuyersPartialSignature(S::Store<'a, PartialSignature>),
-    SellersAdaptor(S::Store<'a, Adaptor>),
-}
-
-pub type Adaptor = MaybeScalar;
 
 pub struct KeyPair<PrvKey: ValStorage = ByVal> {
     pub pub_key: Point,
@@ -107,13 +102,14 @@ struct KeyCtx {
 #[derive(Default)]
 struct SigCtx {
     am_buyer: bool,
+    adaptor_point: MaybePoint,
     my_nonce_share: Option<NoncePair>,
     peers_nonce_share: Option<PubNonce>,
     aggregated_nonce: Option<AggNonce>,
     message: Option<Vec<u8>>,
     my_partial_sig: Option<PartialSignature>,
     peers_partial_sig: Option<PartialSignature>,
-    aggregated_sig: Option<LiftedSignature>,
+    aggregated_sig: Option<AdaptorSignature>,
 }
 
 impl TradeModel {
@@ -132,13 +128,16 @@ impl TradeModel {
         trade_model
     }
 
-    fn am_buyer(&self) -> bool {
-        self.my_role == Role::BuyerAsMaker || self.my_role == Role::BuyerAsTaker
+    const fn am_buyer(&self) -> bool {
+        matches!(self.my_role, Role::BuyerAsMaker | Role::BuyerAsTaker)
     }
 
     pub fn init_my_key_shares(&mut self) {
-        self.buyer_output_key_ctx.init_my_key_share();
+        let buyer_output_pub_key = self.buyer_output_key_ctx.init_my_key_share().pub_key;
         self.seller_output_key_ctx.init_my_key_share();
+        if !self.am_buyer() {
+            self.swap_tx_input_sig_ctx.adaptor_point = MaybePoint::Valid(buyer_output_pub_key);
+        }
     }
 
     pub fn get_my_key_shares(&self) -> Option<[&KeyPair; 2]> {
@@ -151,6 +150,10 @@ impl TradeModel {
     pub fn set_peer_key_shares(&mut self, buyer_output_pub_key: Point, seller_output_pub_key: Point) {
         self.buyer_output_key_ctx.peers_key_share = Some(KeyPair::from_public(buyer_output_pub_key));
         self.seller_output_key_ctx.peers_key_share = Some(KeyPair::from_public(seller_output_pub_key));
+        if self.am_buyer() {
+            // TODO: Should check that signing hasn't already begun before setting an adaptor point.
+            self.swap_tx_input_sig_ctx.adaptor_point = MaybePoint::Valid(buyer_output_pub_key);
+        }
     }
 
     pub fn aggregate_key_shares(&mut self) -> Result<()> {
@@ -244,15 +247,6 @@ impl TradeModel {
             .sign_partial(seller_key_ctx, b"seller's warning tx seller input".into())?;
         self.sellers_redirect_tx_input_sig_ctx
             .sign_partial(seller_key_ctx, b"seller's redirect tx input".into())?;
-
-        if !self.am_buyer() {
-            // TODO: Make sure that this simplistic difference, between the seller's multisig private key
-            //  share and the seller's signature share on the swap tx, actually gives a secure adaptor.
-            //  !! NEEDS CAREFUL CONSIDERATION !! (There may be a better / more standard approach.)
-            let sellers_prv_key_share = seller_key_ctx.my_key_share.as_ref().unwrap().prv_key;
-            let sellers_sig_share = *self.swap_tx_input_sig_ctx.my_partial_sig.as_ref().unwrap();
-            self.swap_tx_input_adaptor = Some(sellers_prv_key_share - sellers_sig_share);
-        }
         Ok(())
     }
 
@@ -262,14 +256,14 @@ impl TradeModel {
                 peers_warning_tx_buyer_input_partial_signature: self.sellers_warning_tx_buyer_input_sig_ctx.my_partial_sig.as_ref()?,
                 peers_warning_tx_seller_input_partial_signature: self.sellers_warning_tx_seller_input_sig_ctx.my_partial_sig.as_ref()?,
                 peers_redirect_tx_input_partial_signature: self.sellers_redirect_tx_input_sig_ctx.my_partial_sig.as_ref()?,
-                swap_tx_input_scalar: Some(SwapTxInputScalar::BuyersPartialSignature(self.swap_tx_input_sig_ctx.my_partial_sig.as_ref()?)),
+                swap_tx_input_partial_signature: Some(self.swap_tx_input_sig_ctx.my_partial_sig.as_ref()?),
             }
         } else {
             ExchangedSigs {
                 peers_warning_tx_buyer_input_partial_signature: self.buyers_warning_tx_buyer_input_sig_ctx.my_partial_sig.as_ref()?,
                 peers_warning_tx_seller_input_partial_signature: self.buyers_warning_tx_seller_input_sig_ctx.my_partial_sig.as_ref()?,
                 peers_redirect_tx_input_partial_signature: self.buyers_redirect_tx_input_sig_ctx.my_partial_sig.as_ref()?,
-                swap_tx_input_scalar: Some(SwapTxInputScalar::SellersAdaptor(self.swap_tx_input_adaptor.as_ref()?)),
+                swap_tx_input_partial_signature: Some(self.swap_tx_input_sig_ctx.my_partial_sig.as_ref()?),
             }
         })
     }
@@ -279,18 +273,15 @@ impl TradeModel {
             self.buyers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
             self.buyers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
             self.buyers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(sigs.peers_redirect_tx_input_partial_signature);
-            if let Some(SwapTxInputScalar::SellersAdaptor(adaptor)) = sigs.swap_tx_input_scalar {
-                self.swap_tx_input_adaptor = Some(adaptor); // TODO: The buyer MUST check that the adaptor is valid!
-            }
+            self.swap_tx_input_sig_ctx.peers_partial_sig = sigs.swap_tx_input_partial_signature;
         } else {
             self.sellers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
             self.sellers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
             self.sellers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(sigs.peers_redirect_tx_input_partial_signature);
-            if let Some(SwapTxInputScalar::BuyersPartialSignature(sig)) = sigs.swap_tx_input_scalar {
-                // NOTE: This branch would not normally be used. The buyer should redact this field at the trade start
-                // and reveal it later, after payment is started, to prevent premature trade closure by the seller.
-                self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
-            }
+
+            // NOTE: The passed field here would normally be 'None'. The buyer should redact the field at the trade
+            // start and reveal it later, after payment is started, to prevent premature trade closure by the seller:
+            self.swap_tx_input_sig_ctx.peers_partial_sig = sigs.swap_tx_input_partial_signature;
         }
     }
 
@@ -299,6 +290,11 @@ impl TradeModel {
             self.buyers_warning_tx_buyer_input_sig_ctx.aggregate_partial_signatures(&self.buyer_output_key_ctx)?;
             self.buyers_warning_tx_seller_input_sig_ctx.aggregate_partial_signatures(&self.seller_output_key_ctx)?;
             self.buyers_redirect_tx_input_sig_ctx.aggregate_partial_signatures(&self.buyer_output_key_ctx)?;
+
+            // This forms a validated adaptor signature on the swap tx for the buyer, ensuring that the seller's
+            // private key share is revealed if the swap tx is published. The seller doesn't get the full adaptor
+            // signature (or the ordinary signature) until later on in the trade, when the buyer confirms payment:
+            self.swap_tx_input_sig_ctx.aggregate_partial_signatures(&self.buyer_output_key_ctx)?;
         } else {
             self.sellers_warning_tx_buyer_input_sig_ctx.aggregate_partial_signatures(&self.buyer_output_key_ctx)?;
             self.sellers_warning_tx_seller_input_sig_ctx.aggregate_partial_signatures(&self.seller_output_key_ctx)?;
@@ -307,16 +303,8 @@ impl TradeModel {
         Ok(())
     }
 
-    pub fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) -> Result<()> {
-        if self.am_buyer() {
-            let adaptor = self.swap_tx_input_adaptor
-                .ok_or(ProtocolErrorKind::MissingAdaptor)?;
-            self.seller_output_key_ctx.peers_key_share.as_mut()
-                .ok_or(ProtocolErrorKind::MissingKeyShare)?
-                .set_prv_key((adaptor - sig).try_into()?)?;
-        }
+    pub fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) {
         self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
-        Ok(())
     }
 
     pub fn aggregate_swap_tx_partial_signatures(&mut self) -> Result<()> {
@@ -393,9 +381,9 @@ impl NoncePair {
 }
 
 impl KeyCtx {
-    fn init_my_key_share(&mut self) {
+    fn init_my_key_share(&mut self) -> &KeyPair {
         // FIXME: Obtains a dummy private key -- may need to pass a provider or RNG to the constructor.
-        self.my_key_share = Some(KeyPair::new());
+        self.my_key_share.insert(KeyPair::new())
     }
 
     fn get_key_shares(&self) -> Option<[Point; 2]> {
@@ -469,7 +457,8 @@ impl SigCtx {
         let aggregated_nonce = &self.aggregated_nonce.as_ref()
             .ok_or(ProtocolErrorKind::MissingAggNonce)?;
 
-        let sig = musig2::sign_partial(key_agg_ctx, seckey, secnonce, aggregated_nonce, &message[..])?;
+        let sig = musig2::adaptor::sign_partial(key_agg_ctx, seckey, secnonce, aggregated_nonce,
+            self.adaptor_point, &message[..])?;
         self.message = Some(message);
         Ok(self.my_partial_sig.insert(sig))
     }
@@ -482,7 +471,7 @@ impl SigCtx {
         })
     }
 
-    fn aggregate_partial_signatures(&mut self, key_ctx: &KeyCtx) -> Result<&LiftedSignature> {
+    fn aggregate_partial_signatures(&mut self, key_ctx: &KeyCtx) -> Result<&AdaptorSignature> {
         let key_agg_ctx = key_ctx.key_agg_ctx.as_ref()
             .ok_or(ProtocolErrorKind::MissingAggPubKey)?;
         let aggregated_nonce = &self.aggregated_nonce.as_ref()
@@ -492,7 +481,8 @@ impl SigCtx {
         let message = &self.message.as_ref()
             .ok_or(ProtocolErrorKind::MissingPartialSig)?[..];
 
-        let sig = musig2::aggregate_partial_signatures(key_agg_ctx, aggregated_nonce, partial_signatures, message)?;
+        let sig = musig2::adaptor::aggregate_partial_signatures(key_agg_ctx, aggregated_nonce,
+            self.adaptor_point, partial_signatures, message)?;
         Ok(self.aggregated_sig.insert(sig))
     }
 }
@@ -508,8 +498,6 @@ pub enum ProtocolErrorKind {
     MissingNonceShare,
     #[error("missing partial signature")]
     MissingPartialSig,
-    #[error("missing adaptor")]
-    MissingAdaptor,
     #[error("missing aggregated pubkey")]
     MissingAggPubKey,
     #[error("missing aggregated nonce")]

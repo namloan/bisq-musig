@@ -84,7 +84,7 @@ public class TradeProtocolClient {
 
         var sellerDepositPsbt = stub.signDepositTx(Helloworld.DepositTxSignatureRequest.newBuilder()
                 .setTradeId("seller-trade")
-                .setPeersPartialSignatures(buyerPartialSignatureMessage.toBuilder().clearSwapTxInputBuyersPartialSignature()) // REDACT swapTxInputBuyersPartialSignature.
+                .setPeersPartialSignatures(buyerPartialSignatureMessage.toBuilder().clearSwapTxInputPartialSignature()) // REDACT buyer's swapTxInputPartialSignature.
                 .build());
         System.out.println("Got reply: " + sellerDepositPsbt);
 
@@ -107,7 +107,7 @@ public class TradeProtocolClient {
 
         var swapTxSignatureResponse = stub.signSwapTx(Helloworld.SwapTxSignatureRequest.newBuilder()
                 .setTradeId("seller-trade")
-                .setSwapTxInputPeersPartialSignature(buyerPartialSignatureMessage.getSwapTxInputBuyersPartialSignature()) // NOW send the redacted swapTxInputBuyersPartialSignature.
+                .setSwapTxInputPeersPartialSignature(buyerPartialSignatureMessage.getSwapTxInputPartialSignature()) // NOW send the redacted buyer's swapTxInputPartialSignature.
                 .build());
         System.out.println("Got reply: " + swapTxSignatureResponse);
 

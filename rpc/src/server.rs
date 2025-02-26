@@ -9,8 +9,6 @@ use helloworld::{ClockRequest, CloseTradeRequest, CloseTradeResponse, DepositPsb
     TxConfirmationStatus};
 use helloworld::greeter_server::{Greeter, GreeterServer};
 use helloworld::mu_sig_server::{MuSig, MuSigServer};
-use helloworld::partial_signatures_message::SwapTxInputScalar::{SwapTxInputBuyersPartialSignature,
-    SwapTxInputSellersAdaptor};
 use musig2::PubNonce;
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
@@ -23,9 +21,8 @@ use tokio_stream::StreamExt as _;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
-use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, SwapTxInputScalar,
-    TradeModel, TradeModelStore as _, TRADE_MODELS};
-use crate::storage::{ByRef, ByVal};
+use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, TradeModel,
+    TradeModelStore as _, TRADE_MODELS};
 
 pub mod helloworld {
     #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
@@ -172,8 +169,8 @@ impl MuSig for MyMuSig {
             my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
             peers_redirect_tx_input_partial_signature:
             my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
-            swap_tx_input_scalar:
-            my_partial_signatures.swap_tx_input_scalar.map(Into::into),
+            swap_tx_input_partial_signature:
+            my_partial_signatures.swap_tx_input_partial_signature.map(|s| s.serialize().into()),
         };
 
         Ok(Response::new(response))
@@ -195,8 +192,8 @@ impl MuSig for MyMuSig {
             peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
             peers_redirect_tx_input_partial_signature:
             peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
-            swap_tx_input_scalar:
-            peers_partial_signatures.swap_tx_input_scalar.as_ref().my_try_into()?,
+            swap_tx_input_partial_signature:
+            peers_partial_signatures.swap_tx_input_partial_signature.my_try_into()?,
         });
         trade_model.aggregate_partial_signatures()?;
         let response = DepositPsbt {
@@ -234,7 +231,7 @@ impl MuSig for MyMuSig {
         let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
             .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
         let mut trade_model = trade_model.lock().unwrap();
-        trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?)?;
+        trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?);
         trade_model.aggregate_swap_tx_partial_signatures()?;
         let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
             .ok_or_else(|| Status::internal("missing private key share"))?;
@@ -319,24 +316,6 @@ impl MyTryInto<Role> for i32 {
         TryInto::<helloworld::Role>::try_into(self)
             .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
             .map(Into::into)
-    }
-}
-
-impl<'a> From<SwapTxInputScalar<'a, ByRef>> for helloworld::partial_signatures_message::SwapTxInputScalar {
-    fn from(value: SwapTxInputScalar<'a, ByRef>) -> Self {
-        match value {
-            SwapTxInputScalar::BuyersPartialSignature(s) => SwapTxInputBuyersPartialSignature(s.serialize().into()),
-            SwapTxInputScalar::SellersAdaptor(a) => SwapTxInputSellersAdaptor(a.serialize().into()),
-        }
-    }
-}
-
-impl<'a> MyTryInto<SwapTxInputScalar<'a, ByVal>> for &'a helloworld::partial_signatures_message::SwapTxInputScalar {
-    fn my_try_into(self) -> Result<SwapTxInputScalar<'a, ByVal>, Status> {
-        Ok(match self {
-            SwapTxInputBuyersPartialSignature(s) => SwapTxInputScalar::BuyersPartialSignature((&s[..]).my_try_into()?),
-            SwapTxInputSellersAdaptor(a) => SwapTxInputScalar::SellersAdaptor((&a[..]).my_try_into()?),
-        })
     }
 }
 

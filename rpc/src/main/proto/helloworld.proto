@@ -96,10 +96,7 @@ message PartialSignaturesMessage {
   bytes peersWarningTxBuyerInputPartialSignature = 1;
   bytes peersWarningTxSellerInputPartialSignature = 2;
   bytes peersRedirectTxInputPartialSignature = 3;
-  oneof swapTxInputScalar {
-    bytes swapTxInputBuyersPartialSignature = 4;
-    bytes swapTxInputSellersAdaptor = 5;
-  }
+  optional bytes swapTxInputPartialSignature = 4;
 }
 
 message DepositTxSignatureRequest {
