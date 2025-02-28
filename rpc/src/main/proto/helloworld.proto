@@ -132,6 +132,7 @@ message SwapTxSignatureResponse {
 message CloseTradeRequest {
   string tradeId = 1;
   optional bytes myOutputPeersPrvKeyShare = 2;
+  optional bytes swapTx = 3;
 }
 
 message CloseTradeResponse {

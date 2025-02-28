@@ -1,7 +1,7 @@
-use musig2::{AggNonce, KeyAggContext, NonceSeed, PartialSignature, PubNonce, SecNonce,
-    SecNonceBuilder};
+use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignature, PubNonce,
+    SecNonce, SecNonceBuilder};
 use musig2::adaptor::AdaptorSignature;
-use secp::{MaybePoint, Point, Scalar};
+use secp::{MaybePoint, MaybeScalar, Point, Scalar};
 use std::collections::BTreeMap;
 use std::prelude::rust_2021::*;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -346,6 +346,22 @@ impl TradeModel {
     pub fn aggregate_private_keys_for_my_output(&mut self) -> Result<&Scalar> {
         self.get_my_key_ctx_mut().aggregate_prv_key_shares()
     }
+
+    pub fn compute_swap_tx_input_signature(&self) -> Result<LiftedSignature> {
+        let adaptor_sig = self.swap_tx_input_sig_ctx.aggregated_sig
+            .ok_or(ProtocolErrorKind::MissingAggSig)?;
+        let adaptor_secret = self.buyer_output_key_ctx.get_sellers_prv_key()
+            .ok_or(ProtocolErrorKind::MissingKeyShare)?;
+        adaptor_sig.adapt(adaptor_secret).ok_or(ProtocolErrorKind::ZeroNonce)
+    }
+
+    pub fn recover_seller_private_key_share_for_buyer_output(&mut self, swap_tx_input_signature: &LiftedSignature) -> Result<()> {
+        let adaptor_sig = self.swap_tx_input_sig_ctx.aggregated_sig
+            .ok_or(ProtocolErrorKind::MissingAggSig)?;
+        let adaptor_secret: MaybeScalar = adaptor_sig.reveal_secret(swap_tx_input_signature)
+            .ok_or(ProtocolErrorKind::MismatchedSigs)?;
+        self.buyer_output_key_ctx.set_sellers_prv_key_if_buyer(adaptor_secret.try_into()?)
+    }
 }
 
 impl KeyPair {
@@ -419,6 +435,21 @@ impl KeyCtx {
             .ok_or(ProtocolErrorKind::MissingAggPubKey)?;
         agg_key.set_prv_key(agg_ctx.aggregated_seckey(prv_key_shares)?)
     }
+
+    fn get_sellers_prv_key(&self) -> Option<Scalar> {
+        if self.am_buyer {
+            self.peers_key_share.as_ref()?.prv_key
+        } else {
+            Some(self.my_key_share.as_ref()?.prv_key)
+        }
+    }
+
+    fn set_sellers_prv_key_if_buyer(&mut self, prv_key: Scalar) -> Result<()> {
+        if self.am_buyer {
+            self.peers_key_share.as_mut().ok_or(ProtocolErrorKind::MissingKeyShare)?.set_prv_key(prv_key)?;
+        }
+        Ok(())
+    }
 }
 
 impl SigCtx {
@@ -438,12 +469,18 @@ impl SigCtx {
         })
     }
 
-    fn aggregate_nonce_shares(&mut self) -> Result<()> {
-        // TODO: Should check that the aggregated nonce doesn't have a zero point & fail immediately
-        //  otherwise. (No need to assign blame at the signing stage, as this is two-party.)
-        self.aggregated_nonce = Some(AggNonce::sum(self.get_nonce_shares()
-            .ok_or(ProtocolErrorKind::MissingKeyShare)?));
-        Ok(())
+    fn aggregate_nonce_shares(&mut self) -> Result<&AggNonce> {
+        let agg_nonce = AggNonce::sum(self.get_nonce_shares()
+            .ok_or(ProtocolErrorKind::MissingKeyShare)?);
+        if matches!((&agg_nonce.R1, &agg_nonce.R2), (MaybePoint::Infinity, MaybePoint::Infinity)) {
+            // Fail early if the aggregated nonce is zero, since otherwise an attacker could force
+            // the final signature nonce to be equal to the base point, G. While that might not be
+            // a problem (for us), there would be an attack vector if such signatures were ever
+            // deemed to be nonstandard. (Note that being able to assign blame later by allowing
+            // this through is unimportant for a two-party protocol.)
+            return Err(ProtocolErrorKind::ZeroNonce);
+        }
+        Ok(self.aggregated_nonce.insert(agg_nonce))
     }
 
     fn sign_partial(&mut self, key_ctx: &KeyCtx, message: Vec<u8>) -> Result<&PartialSignature> {
@@ -501,11 +538,17 @@ pub enum ProtocolErrorKind {
     #[error("missing aggregated pubkey")]
     MissingAggPubKey,
     #[error("missing aggregated nonce")]
+    MissingAggSig,
+    #[error("missing aggregated signature")]
     MissingAggNonce,
     #[error("nonce has already been used")]
     NonceReuse,
+    #[error("nonce is zero")]
+    ZeroNonce,
     #[error("public-private key mismatch")]
     MismatchedKeyPair,
+    #[error("mismatched adaptor and final signature")]
+    MismatchedSigs,
     KeyAgg(#[from] musig2::errors::KeyAggError),
     Signing(#[from] musig2::errors::SigningError),
     Verify(#[from] musig2::errors::VerifyError),

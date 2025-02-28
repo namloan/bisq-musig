@@ -9,7 +9,7 @@ use helloworld::{ClockRequest, CloseTradeRequest, CloseTradeResponse, DepositPsb
     TxConfirmationStatus};
 use helloworld::greeter_server::{Greeter, GreeterServer};
 use helloworld::mu_sig_server::{MuSig, MuSigServer};
-use musig2::PubNonce;
+use musig2::{LiftedSignature, PubNonce};
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
@@ -233,10 +233,12 @@ impl MuSig for MyMuSig {
         let mut trade_model = trade_model.lock().unwrap();
         trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?);
         trade_model.aggregate_swap_tx_partial_signatures()?;
+        let sig = trade_model.compute_swap_tx_input_signature()?;
         let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
             .ok_or_else(|| Status::internal("missing private key share"))?;
         let response = SwapTxSignatureResponse {
-            swap_tx: b"signed_swap_tx".into(),
+            // For now, just set 'swap_tx' to be the (final) swap tx signature, rather than the actual signed tx:
+            swap_tx: sig.serialize().into(),
             peer_output_prv_key_share: prv_key_share.serialize().into(),
         };
 
@@ -251,9 +253,16 @@ impl MuSig for MyMuSig {
             .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
         let mut trade_model = trade_model.lock().unwrap();
         if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
+            // Trader receives the private key share from a cooperative peer, closing our trade.
             trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
             trade_model.aggregate_private_keys_for_my_output()?;
+        } else if let Some(swap_tx_input_signature) = request.swap_tx.my_try_into()? {
+            // Buyer supplies a signed swap tx to the Rust server, to close our trade. (Mainly for
+            // testing -- normally the tx would be picked up from the bitcoin network by the server.)
+            trade_model.recover_seller_private_key_share_for_buyer_output(&swap_tx_input_signature)?;
+            trade_model.aggregate_private_keys_for_my_output()?;
         } else {
+            // Peer unresponsive -- force-close our trade by publishing the swap tx. For seller only.
             // TODO: *** BROADCAST SWAP TX ***
         }
         let my_prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
@@ -308,6 +317,12 @@ impl MyTryInto<Scalar> for &[u8] {
 impl MyTryInto<MaybeScalar> for &[u8] {
     fn my_try_into(self) -> Result<MaybeScalar, Status> {
         self.try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
+    }
+}
+
+impl MyTryInto<LiftedSignature> for &[u8] {
+    fn my_try_into(self) -> Result<LiftedSignature, Status> {
+        self.try_into().map_err(|_| Status::invalid_argument("could not decode signature"))
     }
 }
 
