@@ -1,92 +1,25 @@
 // Bitcoin and BDK-related imports
-use crate::{
-    build_and_merge_tx, generate_part_tx, transfer_sig_and_broadcast, ConnectedWallet, DepositTx,
-    ProtocolRole, TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL, DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP,
-};
-// External crates
-use dotenv::dotenv;
-use rand::RngCore;
-use std::process::Output;
-use std::{collections::HashMap, env, error::Error, process::Command, str::FromStr, thread, time};
 
-use crate::musig_protocol::MusigProtocol;
-use bdk_core::bitcoin::Network::Bitcoin;
+// External crates
+use std::process::Output;
+use std::{collections::HashMap, process::Command, str::FromStr, thread, time};
+
+use crate::{TestWallet, DESCRIPTOR_PRIVATE_EXTERNAL, DESCRIPTOR_PRIVATE_INTERNAL, STOP_GAP};
+use bdk_core::bitcoin::Address;
 use bdk_core::{
     bitcoin::{
-        self,
-        secp256k1::{Keypair, Secp256k1, XOnlyPublicKey},
-        Amount, Network, Txid, WitnessVersion,
+        secp256k1::XOnlyPublicKey,
+        Amount, Network,
     },
     spk_client::{FullScanRequestBuilder, SyncRequestBuilder},
 };
-use bdk_electrum::{electrum_client, BdkElectrumClient};
 use bdk_esplora::esplora_client::Builder;
 use bdk_esplora::{esplora_client, EsploraExt};
-use bdk_wallet::bitcoin::key::TapTweak;
-use bdk_wallet::bitcoin::KnownHrp;
-use bdk_wallet::miniscript::{translate_hash_fail, Tap, ToPublicKey};
+use bdk_wallet::miniscript::{translate_hash_fail, Translator};
 use bdk_wallet::rusqlite::Connection;
-use bdk_wallet::{
-    bitcoin::{bip32::Xpriv, Address},
-    miniscript::{
-        descriptor::DescriptorType, policy::Concrete, Descriptor, DescriptorPublicKey, Miniscript,
-        TranslatePk, Translator,
-    },
-    serde_json,
-    template::{Bip86, DescriptorTemplate},
-    KeychainKind, PersistedWallet, Wallet,
-};
-/*
-ENDPOINTS
-chopsticks localhost:3000
-bitcoin localhost:18443
-bitcoin localhost:18444
-bitcoin localhost:28332
-bitcoin localhost:28333
-lnd localhost:9735
-lnd localhost:10009
-lnd localhost:18080
-tap localhost:10029
-tap localhost:8089
-cln localhost:9935
-cln localhost:9835
-esplora localhost:5000
-electrs localhost:50000
-electrs localhost:30000
+use bdk_wallet::{KeychainKind, PersistedWallet, Wallet};
 
- */
-
-/** run protocol as library
-using security by identical generation
-*/
-#[test]
-fn test_deposit_protocol() -> anyhow::Result<()> {
-    println!("running...");
-    check_start();
-    let mut alice_funds = funded_wallet();
-    let bob_funds = funded_wallet();
-    fund_wallet(&mut alice_funds);
-    let seller_amount = &Amount::from_btc(1.4)?;
-    let buyer_amount = &Amount::from_btc(0.2)?;
-
-    let alice = &mut MusigProtocol::new(alice_funds, ProtocolRole::Seller, seller_amount, buyer_amount)?;
-    let bob = &mut MusigProtocol::new(bob_funds, ProtocolRole::Buyer, seller_amount, buyer_amount)?;
-
-    // Round 1
-    let alice_psbt = &alice.generate_part_tx()?;
-    let bob_psbt = &bob.generate_part_tx()?;
-    // Round2
-    let alice_signed = &alice.build_and_merge_tx(alice_psbt, bob_psbt)?;
-    let bob_signed = &bob.build_and_merge_tx(bob_psbt, alice_psbt)?;
-    // Round 3
-    let alice_txid = alice.transfer_sig_and_broadcast(alice_signed, bob_signed)?;
-    println!("Alice txid = {}", alice_txid);
-    let bob_txid = bob.transfer_sig_and_broadcast(bob_signed, alice_signed)?;
-    println!("Bob txid = {}", bob_txid);
-    tiktok();
-    Ok(())
-}
-/** run protocol as library
+/** run p3 as library
 using security by identical generation
 */
 #[test]
@@ -365,7 +298,7 @@ fn policy_test() -> Result<(), Box<dyn Error>> {
 
     // BDK also has it's own `Policy` structure to represent the spending condition in a more
     // human readable json format.
-    let spending_policy = wallet.policies(KeychainKind::External)?;
+    let spending_policy = wallet.policies(KeychainKind::External)?.unwrap();
     println!(
         "The BDK spending policy: \n{}",
         serde_json::to_string_pretty(&spending_policy)?

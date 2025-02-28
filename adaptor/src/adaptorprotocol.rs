@@ -25,7 +25,7 @@ pub(crate) fn key4sig() {
     bob.pub_adaptor = Some(pub_adaptor);
 
     // now Alice and Bob are initialized
-    // Alice runs the protocol to receive the signature from Bob and reveals to him the adaptor_secret
+    // Alice runs the p3 to receive the signature from Bob and reveals to him the adaptor_secret
     let bob_adaptor_secret = alice.ms_adaptor(bob);
 
     // now the secret_adapt must have transported from alice to bob
@@ -33,7 +33,7 @@ pub(crate) fn key4sig() {
     println!("Done.");
 }
 /**
-struct to hold all data for this protocol. Most data will be added successively.
+struct to hold all data for this p3. Most data will be added successively.
 that's my fields are Options.
 */
 struct M2a {
