@@ -91,7 +91,7 @@ impl MemWallet {
         self.wallet.next_unused_address(KeychainKind::External)
     }
 
-    fn transfer_to_address(
+    fn _transfer_to_address(
         &mut self,
         address: AddressInfo,
         amount: Amount,
@@ -270,6 +270,7 @@ impl BMPProtocol {
         if self.ctx.role == ProtocolRole::Buyer {
             let tx = bob.swap_onchain.as_ref().unwrap();
             self.swap_tx.reveal(tx, &mut self.p_tik)?;
+            dbg!("Revealed p_tik aggregated secret key:");
             dbg!(&self.p_tik);
         }
         Ok(())

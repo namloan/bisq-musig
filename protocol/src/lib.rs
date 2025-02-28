@@ -26,7 +26,7 @@ mod tests {
         let mut alice = BMPProtocol::new(alice_context)?;
         let bob_context = BMPContext::new(bob_funds, ProtocolRole::Buyer, seller_amount.clone(), buyer_amount.clone())?;
         let mut bob = BMPProtocol::new(bob_context)?;
-        crate::nigiri::tiktok();
+        nigiri::tiktok();
 
         // Round 1--------
         let alice_response = alice.round1()?;

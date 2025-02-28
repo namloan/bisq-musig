@@ -2,7 +2,6 @@
 
 use crate::protocol_musig_adaptor::MemWallet;
 use bdk_wallet::bitcoin::Amount;
-use bdk_wallet::miniscript::TranslatePk;
 use std::process::Output;
 use std::{process::Command, thread, time};
 
