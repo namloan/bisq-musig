@@ -1,0 +1,143 @@
+MuSig trade protocol txs
+========================
+
+* There is a DepositTx with buyer & seller (payout) outputs (one each, multisig
+  & keyspend only), along with buyer & seller inputs & optional change outputs;
+
+* There is a buyer's WarningTx & a seller's WarningTx, each with two inputs
+  spending the DepositTx (payout) outputs, and each with one multisig output
+  (with one keyspend & one script spend path) and one fee bump output;
+
+* There is a buyer's RedirectTx & a seller's RedirectTx, each with one input
+  from the peer's multisig WarningTx output, any number of donation / BM
+  outputs and one fee bump output;
+
+* There is a SwapTx with one input spending the DepositTx seller payout and one
+  output controlled by the seller;
+
+* Signed claim txs can be created dynamically, which use the WarningTx script
+  spend path, with a time delay enforced by OP_CHECKSEQUENCEVERIFY.
+
+All spends are keyspends apart from those of the claim txs.
+
+
+Trade protocol messages
+=======================
+
+* Four messages A, B, C & D are needed to set up the trade;
+
+* Buyer message E confirms sending of fiat/altcoin payment and allows seller to
+  release (through SwapTx or message F);
+
+* Seller message F confirms receipt of fiat/altcoin payment and releases buyer
+  payout;
+
+* Buyer courtesy message G closes trade and releases seller payout without
+  requiring SwapTx broadcast (should be sent as soon as the buyer goes online
+  and picks up message F, hopefully immediately after F is sent).
+
+
+      Maker               Taker
+        |                   |
+        |         A         |
+        |<------------------|
+        |                   |
+        |         B         |
+        |------------------>|
+        |                   |
+        |         C         |
+        |<------------------|
+        |                   |
+        |         D         |
+        |------------------>|
+        |                   | Publish DepositTx (opening trade)
+        |         .         |
+                  .
+                  .
+      Buyer               Seller
+(possibly offline)  (possibly offline)
+        |                   |
+ Fiat   |                   |
+payment |                   |
+        |  E (mailbox msg)  |
+        |------------------>|
+        |                   |
+        .                   .
+        .                   .
+        .                   .
+        |                   |
+        |  F (mailbox msg)  |
+        |<------------------|
+        |                   |
+        .                   .
+        .                   .
+        .                   .
+        |                   | Maybe publish SwapTx (if impatient; closes trade)
+        .                   .
+        .                   .
+        .                   .
+        |  G (mailbox msg)  |
+        |------------------>|
+        |  (closes trade)   |
+        |                   |
+
+Message contents:
+
+A:  Taker pubkey share for DepositTx taker output & maker's WarningTx output
+      (== pubkey for taker's WarningTx script spend with a claim tx)
+      (seckey never revealed)
+    Taker pubkey share for DepositTx maker output & taker's WarningTx output
+      (seckey revealed at end of trade)
+    Acceptable tx fee range for DepositTx
+    Acceptable tx fee range for prepared txs (WarningTxs, RedirectTxs, SwapTx)
+
+B:  Maker pubkey share for DepositTx maker output & taker's WarningTx output
+      (== pubkey for maker's WarningTx script spend with a claim tx)
+      (seckey never revealed)
+    Maker pubkey share for DepositTx taker output & maker's WarningTx output
+      (seckey revealed at end of trade)
+    Accepted tx fee for DepositTx
+    Accepted tx fee for prepared txs
+    Maker inputs & optional change output for DepositTx
+    Fee bump address for maker's WarningTx
+    Fee bump address for maker's RedirectTx
+    Maker nonce share for SwapTx input
+    Maker nonce share for maker's WarningTx maker input
+    Maker nonce share for maker's WarningTx taker input
+    Maker nonce share for taker's WarningTx maker input
+    Maker nonce share for taker's WarningTx taker input
+    Maker nonce share for maker's RedirectTx input
+    Maker nonce share for taker's RedirectTx input
+
+C:  Taker inputs & optional change output for DepositTx
+    Fee bump address for taker's WarningTx
+    Fee bump address for maker's RedirectTx
+    Taker nonce share for SwapTx input
+    Taker nonce share for maker's WarningTx maker input
+    Taker nonce share for maker's WarningTx taker input
+    Taker nonce share for taker's WarningTx maker input
+    Taker nonce share for taker's WarningTx taker input
+    Taker nonce share for maker's RedirectTx input
+    Taker nonce share for taker's RedirectTx input
+    Taker partial signature for maker's WarningTx maker input
+    Taker partial signature for maker's WarningTx taker input
+    Taker partial signature for maker's RedirectTx input
+    IF TAKER IS SELLER: Adaptor linking seller partial signature for SwapTx
+                        with seller seckey share for DepositTx buyer output &
+                        seller's WarningTx output
+
+D:  Maker partial signature for taker's WarningTx maker input
+    Maker partial signature for taker's WarningTx taker input
+    Maker partial signature for taker's RedirectTx input
+    IF MAKER IS SELLER: Adaptor linking seller partial signature for SwapTx
+                        with seller seckey share for DepositTx buyer output &
+                        seller's WarningTx output
+    Signatures on DepositTx maker inputs
+
+E.  Buyer partial signature for SwapTx input
+
+F.  Seller seckey share for DepositTx buyer output & sellers's WarningTx output
+
+G.  Buyer seckey share for DepositTx seller output & buyer's WarningTx output
+
+

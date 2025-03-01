@@ -36,10 +36,10 @@ service MuSig {
 }
 
 enum Role {
-  BUYER_AS_MAKER = 0;
-  BUYER_AS_TAKER = 1;
-  SELLER_AS_MAKER = 2;
-  SELLER_AS_TAKER = 3;
+  SELLER_AS_MAKER = 0;
+  SELLER_AS_TAKER = 1;
+  BUYER_AS_MAKER = 2;
+  BUYER_AS_TAKER = 3;
 }
 
 message PubKeyShareRequest {
