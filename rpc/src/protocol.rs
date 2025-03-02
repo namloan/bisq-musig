@@ -294,7 +294,7 @@ impl TradeModel {
             // This forms a validated adaptor signature on the swap tx for the buyer, ensuring that the seller's
             // private key share is revealed if the swap tx is published. The seller doesn't get the full adaptor
             // signature (or the ordinary signature) until later on in the trade, when the buyer confirms payment:
-            self.swap_tx_input_sig_ctx.aggregate_partial_signatures(&self.buyer_output_key_ctx)?;
+            self.swap_tx_input_sig_ctx.aggregate_partial_signatures(&self.seller_output_key_ctx)?;
         } else {
             self.sellers_warning_tx_buyer_input_sig_ctx.aggregate_partial_signatures(&self.buyer_output_key_ctx)?;
             self.sellers_warning_tx_seller_input_sig_ctx.aggregate_partial_signatures(&self.seller_output_key_ctx)?;
@@ -365,8 +365,8 @@ impl TradeModel {
 }
 
 impl KeyPair {
-    fn new() -> Self {
-        Self::from_private(Scalar::one())
+    fn random<R: rand::RngCore + rand::CryptoRng>(rng: &mut R) -> Self {
+        Self::from_private(Scalar::random(rng))
     }
 
     fn from_private(prv_key: Scalar) -> Self {
@@ -398,8 +398,9 @@ impl NoncePair {
 
 impl KeyCtx {
     fn init_my_key_share(&mut self) -> &KeyPair {
-        // FIXME: Obtains a dummy private key -- may need to pass a provider or RNG to the constructor.
-        self.my_key_share.insert(KeyPair::new())
+        // TODO: Make the RNG configurable, to aid unit testing. (Also, we may not necessarily want
+        //  to use a nondeterministic random key share):
+        self.my_key_share.insert(KeyPair::random(&mut rand::thread_rng()))
     }
 
     fn get_key_shares(&self) -> Option<[Point; 2]> {
@@ -454,10 +455,10 @@ impl KeyCtx {
 
 impl SigCtx {
     fn init_my_nonce_share(&mut self, key_ctx: &KeyCtx) -> Result<()> {
-        // FIXME: Obtains a fixed nonce share -- must pass a _random_ seed data source to the constructor.
         let aggregated_pub_key = key_ctx.aggregated_key.as_ref()
             .ok_or(ProtocolErrorKind::MissingAggPubKey)?.pub_key;
-        self.my_nonce_share = Some(NoncePair::new([0; 32], aggregated_pub_key));
+        // TODO: Make the RNG configurable, to aid unit testing:
+        self.my_nonce_share = Some(NoncePair::new(&mut rand::thread_rng(), aggregated_pub_key));
         Ok(())
     }
 
