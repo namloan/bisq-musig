@@ -1,0 +1,37 @@
+[package]
+name = "rpc"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[dependencies]
+futures = "0.3.31"
+musig2 = { version = "0.2.3", features = ["rand"] }
+prost = "0.13.4"
+rand = "0.8.5"
+secp = { version = "0.4.1", features = ["rand"] }
+thiserror = "2.0.11"
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "time"] }
+tokio-stream = "0.1.17"
+tonic = "0.12.3"
+
+[build-dependencies]
+tonic-build = "0.12.3"
+
+[lints.clippy]
+pedantic = "warn"
+# Enable selected 'nursery' and 'restriction' lints...
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+iter_on_single_items = "warn"
+iter_on_empty_collections = "warn"
+renamed_function_params = "warn"
+significant_drop_tightening = "warn"
+str_to_string = "warn"
+try_err = "warn"
+unused_trait_names = "warn"
+# Format arg handling in IDEA Rust plugin is broken:
+uninlined_format_args = { level = "allow", priority = 1 }
