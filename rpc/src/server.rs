@@ -2,22 +2,17 @@ mod protocol;
 mod storage;
 
 use futures::stream;
-use helloworld::{ClockRequest, CloseTradeRequest, CloseTradeResponse, DepositPsbt,
-    DepositTxSignatureRequest, HelloReply, HelloRequest, NonceSharesMessage, NonceSharesRequest,
-    PartialSignaturesMessage, PartialSignaturesRequest, PubKeySharesRequest, PubKeySharesResponse,
-    PublishDepositTxRequest, SwapTxSignatureRequest, SwapTxSignatureResponse, TickEvent,
-    TxConfirmationStatus};
-use helloworld::greeter_server::{Greeter, GreeterServer};
-use helloworld::mu_sig_server::{MuSig, MuSigServer};
 use musig2::{LiftedSignature, PubNonce};
+use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
+    NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage, PartialSignaturesRequest,
+    PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest, SwapTxSignatureRequest,
+    SwapTxSignatureResponse, TxConfirmationStatus};
+use musigrpc::musig_server::{Musig, MusigServer};
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::pin::Pin;
 use std::prelude::rust_2021::*;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::time::Duration;
-use tokio_stream::StreamExt as _;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
@@ -25,45 +20,15 @@ use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, T
     TradeModelStore as _, TRADE_MODELS};
 use crate::storage::{ByRef, ByVal};
 
-pub mod helloworld {
+pub mod musigrpc {
     #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
-    tonic::include_proto!("helloworld");
+    tonic::include_proto!("musigrpc");
 }
 
-#[derive(Default, Debug)]
-pub struct MyGreeter {}
+#[derive(Debug, Default)]
+pub struct MusigImpl {}
 
-#[tonic::async_trait]
-impl Greeter for MyGreeter {
-    async fn say_hello(&self, request: Request<HelloRequest>) -> Result<Response<HelloReply>> {
-        println!("Got a request: {:?}", request);
-
-        let reply = HelloReply {
-            message: format!("Hello, {}!", request.into_inner().name)
-        };
-
-        Ok(Response::new(reply))
-    }
-
-    type SubscribeClockStream = Pin<Box<dyn stream::Stream<Item=Result<TickEvent>> + Send>>;
-
-    async fn subscribe_clock(&self, request: Request<ClockRequest>) -> Result<Response<Self::SubscribeClockStream>> {
-        println!("Got a request: {:?}", request);
-
-        let period = Duration::from_millis(u64::from(request.into_inner().tick_period_millis));
-
-        Ok(Response::new(Box::pin(stream::repeat(())
-            .throttle(period)
-            .map(|()| Ok(TickEvent {
-                current_time_millis: u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()).unwrap()
-            })))))
-    }
-}
-
-#[derive(Default, Debug)]
-pub struct MyMuSig {}
-
-// FIXME: At present, the MuSig service passes some fields to the Java client that should be kept
+// FIXME: At present, the Musig service passes some fields to the Java client that should be kept
 //  secret for a time before passing them to the peer, namely the buyer's partial signature on the
 //  swap tx and the seller's private key share for the buyer payout. Premature revelation of those
 //  secrets would allow the seller to close the trade before the buyer starts payment, or the buyer
@@ -72,7 +37,7 @@ pub struct MyMuSig {}
 //  never hold secrets which directly control funds (but doing so makes the RPC interface a little
 //  bigger and less symmetrical.)
 #[tonic::async_trait]
-impl MuSig for MyMuSig {
+impl Musig for MusigImpl {
     async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>> {
         println!("Got a request: {:?}", request);
 
@@ -230,13 +195,13 @@ fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Resp
 
 type Result<T, E = Status> = std::result::Result<T, E>;
 
-impl From<helloworld::Role> for Role {
-    fn from(value: helloworld::Role) -> Self {
+impl From<musigrpc::Role> for Role {
+    fn from(value: musigrpc::Role) -> Self {
         match value {
-            helloworld::Role::SellerAsMaker => Self::SellerAsMaker,
-            helloworld::Role::SellerAsTaker => Self::SellerAsTaker,
-            helloworld::Role::BuyerAsMaker => Self::BuyerAsMaker,
-            helloworld::Role::BuyerAsTaker => Self::BuyerAsTaker
+            musigrpc::Role::SellerAsMaker => Self::SellerAsMaker,
+            musigrpc::Role::SellerAsTaker => Self::SellerAsTaker,
+            musigrpc::Role::BuyerAsMaker => Self::BuyerAsMaker,
+            musigrpc::Role::BuyerAsTaker => Self::BuyerAsTaker
         }
     }
 }
@@ -269,7 +234,7 @@ impl_my_try_into_for_slice!(LiftedSignature, "could not decode signature");
 
 impl MyTryInto<Role> for i32 {
     fn my_try_into(self) -> Result<Role> {
-        TryInto::<helloworld::Role>::try_into(self)
+        TryInto::<musigrpc::Role>::try_into(self)
             .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
             .map(Into::into)
     }
@@ -368,12 +333,10 @@ impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:50051".parse()?;
-    let greeter = MyGreeter::default();
-    let musig = MyMuSig::default();
+    let musig = MusigImpl::default();
 
     Server::builder()
-        .add_service(GreeterServer::new(greeter))
-        .add_service(MuSigServer::new(musig))
+        .add_service(MusigServer::new(musig))
         .serve(addr)
         .await?;
 

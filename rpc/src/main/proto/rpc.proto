@@ -1,29 +1,7 @@
 syntax = "proto3";
-package helloworld;
+package musigrpc;
 
-service Greeter {
-  rpc SayHello (HelloRequest) returns (HelloReply);
-
-  rpc SubscribeClock (ClockRequest) returns (stream TickEvent);
-}
-
-message HelloRequest {
-  string name = 1;
-}
-
-message HelloReply {
-  string message = 1;
-}
-
-message ClockRequest {
-  uint32 tickPeriodMillis = 1;
-}
-
-message TickEvent {
-  uint64 currentTimeMillis = 1;
-}
-
-service MuSig {
+service Musig {
   rpc InitTrade (PubKeySharesRequest) returns (PubKeySharesResponse);
 
   rpc GetNonceShares (NonceSharesRequest) returns (NonceSharesMessage);
