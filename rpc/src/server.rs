@@ -23,6 +23,7 @@ use tonic::transport::Server;
 
 use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, TradeModel,
     TradeModelStore as _, TRADE_MODELS};
+use crate::storage::{ByRef, ByVal};
 
 pub mod helloworld {
     #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
@@ -109,20 +110,7 @@ impl MuSig for MyMuSig {
                 warning_tx_fee_bump_address: "address1".to_owned(),
                 redirect_tx_fee_bump_address: "address2".to_owned(),
                 half_deposit_psbt: vec![],
-                swap_tx_input_nonce_share:
-                my_nonce_shares.swap_tx_input_nonce_share.serialize().into(),
-                buyers_warning_tx_buyer_input_nonce_share:
-                my_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.serialize().into(),
-                buyers_warning_tx_seller_input_nonce_share:
-                my_nonce_shares.buyers_warning_tx_seller_input_nonce_share.serialize().into(),
-                sellers_warning_tx_buyer_input_nonce_share:
-                my_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.serialize().into(),
-                sellers_warning_tx_seller_input_nonce_share:
-                my_nonce_shares.sellers_warning_tx_seller_input_nonce_share.serialize().into(),
-                buyers_redirect_tx_input_nonce_share:
-                my_nonce_shares.buyers_redirect_tx_input_nonce_share.serialize().into(),
-                sellers_redirect_tx_input_nonce_share:
-                my_nonce_shares.sellers_redirect_tx_input_nonce_share.serialize().into(),
+                ..my_nonce_shares.into()
             })
         })
     }
@@ -131,37 +119,13 @@ impl MuSig for MyMuSig {
         handle_request(request, move |request, trade_model| {
             let peer_nonce_shares = request.peers_nonce_shares
                 .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
-            trade_model.set_peer_nonce_shares(ExchangedNonces {
-                swap_tx_input_nonce_share:
-                peer_nonce_shares.swap_tx_input_nonce_share.my_try_into()?,
-                buyers_warning_tx_buyer_input_nonce_share:
-                peer_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-                buyers_warning_tx_seller_input_nonce_share:
-                peer_nonce_shares.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
-                sellers_warning_tx_buyer_input_nonce_share:
-                peer_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-                sellers_warning_tx_seller_input_nonce_share:
-                peer_nonce_shares.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
-                buyers_redirect_tx_input_nonce_share:
-                peer_nonce_shares.buyers_redirect_tx_input_nonce_share.my_try_into()?,
-                sellers_redirect_tx_input_nonce_share:
-                peer_nonce_shares.sellers_redirect_tx_input_nonce_share.my_try_into()?,
-            });
+            trade_model.set_peer_nonce_shares(peer_nonce_shares.my_try_into()?);
             trade_model.aggregate_nonce_shares()?;
             trade_model.sign_partial()?;
             let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
                 .ok_or_else(|| Status::internal("missing partial signatures"))?;
 
-            Ok(PartialSignaturesMessage {
-                peers_warning_tx_buyer_input_partial_signature:
-                my_partial_signatures.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
-                peers_warning_tx_seller_input_partial_signature:
-                my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
-                peers_redirect_tx_input_partial_signature:
-                my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
-                swap_tx_input_partial_signature:
-                my_partial_signatures.swap_tx_input_partial_signature.map(|s| s.serialize().into()),
-            })
+            Ok(my_partial_signatures.into())
         })
     }
 
@@ -169,16 +133,7 @@ impl MuSig for MyMuSig {
         handle_request(request, move |request, trade_model| {
             let peers_partial_signatures = request.peers_partial_signatures
                 .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
-            trade_model.set_peer_partial_signatures_on_my_txs(&ExchangedSigs {
-                peers_warning_tx_buyer_input_partial_signature:
-                peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
-                peers_warning_tx_seller_input_partial_signature:
-                peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
-                peers_redirect_tx_input_partial_signature:
-                peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
-                swap_tx_input_partial_signature:
-                peers_partial_signatures.swap_tx_input_partial_signature.my_try_into()?,
-            });
+            trade_model.set_peer_partial_signatures_on_my_txs(&peers_partial_signatures.my_try_into()?);
             trade_model.aggregate_partial_signatures()?;
 
             Ok(DepositPsbt { deposit_psbt: b"deposit_psbt".into() })
@@ -329,6 +284,83 @@ impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
         Ok(match self {
             None => None,
             Some(x) => Some(x.my_try_into()?)
+        })
+    }
+}
+
+impl From<ExchangedNonces<'_, ByRef>> for NonceSharesMessage {
+    fn from(value: ExchangedNonces<ByRef>) -> Self {
+        NonceSharesMessage {
+            // Use default values for proto fields besides the nonce shares. TODO: A little hacky; consider refactoring proto.
+            warning_tx_fee_bump_address: String::default(),
+            redirect_tx_fee_bump_address: String::default(),
+            half_deposit_psbt: Vec::default(),
+            // Actual nonce shares...
+            swap_tx_input_nonce_share:
+            value.swap_tx_input_nonce_share.serialize().into(),
+            buyers_warning_tx_buyer_input_nonce_share:
+            value.buyers_warning_tx_buyer_input_nonce_share.serialize().into(),
+            buyers_warning_tx_seller_input_nonce_share:
+            value.buyers_warning_tx_seller_input_nonce_share.serialize().into(),
+            sellers_warning_tx_buyer_input_nonce_share:
+            value.sellers_warning_tx_buyer_input_nonce_share.serialize().into(),
+            sellers_warning_tx_seller_input_nonce_share:
+            value.sellers_warning_tx_seller_input_nonce_share.serialize().into(),
+            buyers_redirect_tx_input_nonce_share:
+            value.buyers_redirect_tx_input_nonce_share.serialize().into(),
+            sellers_redirect_tx_input_nonce_share:
+            value.sellers_redirect_tx_input_nonce_share.serialize().into(),
+        }
+    }
+}
+
+impl<'a> MyTryInto<ExchangedNonces<'a, ByVal>> for NonceSharesMessage {
+    fn my_try_into(self) -> Result<ExchangedNonces<'a, ByVal>> {
+        Ok(ExchangedNonces {
+            swap_tx_input_nonce_share:
+            self.swap_tx_input_nonce_share.my_try_into()?,
+            buyers_warning_tx_buyer_input_nonce_share:
+            self.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+            buyers_warning_tx_seller_input_nonce_share:
+            self.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
+            sellers_warning_tx_buyer_input_nonce_share:
+            self.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+            sellers_warning_tx_seller_input_nonce_share:
+            self.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
+            buyers_redirect_tx_input_nonce_share:
+            self.buyers_redirect_tx_input_nonce_share.my_try_into()?,
+            sellers_redirect_tx_input_nonce_share:
+            self.sellers_redirect_tx_input_nonce_share.my_try_into()?,
+        })
+    }
+}
+
+impl From<ExchangedSigs<'_, ByRef>> for PartialSignaturesMessage {
+    fn from(value: ExchangedSigs<ByRef>) -> Self {
+        PartialSignaturesMessage {
+            peers_warning_tx_buyer_input_partial_signature:
+            value.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
+            peers_warning_tx_seller_input_partial_signature:
+            value.peers_warning_tx_seller_input_partial_signature.serialize().into(),
+            peers_redirect_tx_input_partial_signature:
+            value.peers_redirect_tx_input_partial_signature.serialize().into(),
+            swap_tx_input_partial_signature:
+            value.swap_tx_input_partial_signature.map(|s| s.serialize().into()),
+        }
+    }
+}
+
+impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
+    fn my_try_into(self) -> Result<ExchangedSigs<'a, ByVal>> {
+        Ok(ExchangedSigs {
+            peers_warning_tx_buyer_input_partial_signature:
+            self.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
+            peers_warning_tx_seller_input_partial_signature:
+            self.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
+            peers_redirect_tx_input_partial_signature:
+            self.peers_redirect_tx_input_partial_signature.my_try_into()?,
+            swap_tx_input_partial_signature:
+            self.swap_tx_input_partial_signature.my_try_into()?,
         })
     }
 }
