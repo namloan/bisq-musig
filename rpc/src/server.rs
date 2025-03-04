@@ -34,7 +34,7 @@ pub struct MyGreeter {}
 
 #[tonic::async_trait]
 impl Greeter for MyGreeter {
-    async fn say_hello(&self, request: Request<HelloRequest>) -> Result<Response<HelloReply>, Status> {
+    async fn say_hello(&self, request: Request<HelloRequest>) -> Result<Response<HelloReply>> {
         println!("Got a request: {:?}", request);
 
         let reply = HelloReply {
@@ -44,9 +44,9 @@ impl Greeter for MyGreeter {
         Ok(Response::new(reply))
     }
 
-    type SubscribeClockStream = Pin<Box<dyn stream::Stream<Item=Result<TickEvent, Status>> + Send>>;
+    type SubscribeClockStream = Pin<Box<dyn stream::Stream<Item=Result<TickEvent>> + Send>>;
 
-    async fn subscribe_clock(&self, request: Request<ClockRequest>) -> Result<Response<Self::SubscribeClockStream>, Status> {
+    async fn subscribe_clock(&self, request: Request<ClockRequest>) -> Result<Response<Self::SubscribeClockStream>> {
         println!("Got a request: {:?}", request);
 
         let period = Duration::from_millis(u64::from(request.into_inner().tick_period_millis));
@@ -70,10 +70,9 @@ pub struct MyMuSig {}
 //  buyer starts payment), respectively. This should probably be changed, as the Java client should
 //  never hold secrets which directly control funds (but doing so makes the RPC interface a little
 //  bigger and less symmetrical.)
-#[expect(clippy::significant_drop_tightening, reason = "will refactor duplicated mutex code later (possibly with a macro)")] //TODO
 #[tonic::async_trait]
 impl MuSig for MyMuSig {
-    async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>, Status> {
+    async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>> {
         println!("Got a request: {:?}", request);
 
         let request = request.into_inner();
@@ -91,189 +90,190 @@ impl MuSig for MyMuSig {
         Ok(Response::new(response))
     }
 
-    async fn get_nonce_shares(&self, request: Request<NonceSharesRequest>) -> Result<Response<NonceSharesMessage>, Status> {
-        println!("Got a request: {:?}", request);
+    async fn get_nonce_shares(&self, request: Request<NonceSharesRequest>) -> Result<Response<NonceSharesMessage>> {
+        handle_request(request, move |request, trade_model| {
+            trade_model.set_peer_key_shares(
+                request.buyer_output_peers_pub_key_share.my_try_into()?,
+                request.seller_output_peers_pub_key_share.my_try_into()?);
+            trade_model.aggregate_key_shares()?;
+            trade_model.init_my_nonce_shares()?;
+            trade_model.trade_amount = Some(request.trade_amount);
+            trade_model.buyers_security_deposit = Some(request.buyers_security_deposit);
+            trade_model.sellers_security_deposit = Some(request.sellers_security_deposit);
+            trade_model.deposit_tx_fee_rate = Some(request.deposit_tx_fee_rate);
+            trade_model.prepared_tx_fee_rate = Some(request.prepared_tx_fee_rate);
+            let my_nonce_shares = trade_model.get_my_nonce_shares()
+                .ok_or_else(|| Status::internal("missing nonce shares"))?;
 
-        let request = request.into_inner();
-        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
-            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
-        let mut trade_model = trade_model.lock().unwrap();
-        trade_model.set_peer_key_shares(
-            request.buyer_output_peers_pub_key_share.my_try_into()?,
-            request.seller_output_peers_pub_key_share.my_try_into()?);
-        trade_model.aggregate_key_shares()?;
-        trade_model.init_my_nonce_shares()?;
-        trade_model.trade_amount = Some(request.trade_amount);
-        trade_model.buyers_security_deposit = Some(request.buyers_security_deposit);
-        trade_model.sellers_security_deposit = Some(request.sellers_security_deposit);
-        trade_model.deposit_tx_fee_rate = Some(request.deposit_tx_fee_rate);
-        trade_model.prepared_tx_fee_rate = Some(request.prepared_tx_fee_rate);
-        let my_nonce_shares = trade_model.get_my_nonce_shares()
-            .ok_or_else(|| Status::internal("missing nonce shares"))?;
-        let response = NonceSharesMessage {
-            warning_tx_fee_bump_address: "address1".to_owned(),
-            redirect_tx_fee_bump_address: "address2".to_owned(),
-            half_deposit_psbt: vec![],
-            swap_tx_input_nonce_share:
-            my_nonce_shares.swap_tx_input_nonce_share.serialize().into(),
-            buyers_warning_tx_buyer_input_nonce_share:
-            my_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.serialize().into(),
-            buyers_warning_tx_seller_input_nonce_share:
-            my_nonce_shares.buyers_warning_tx_seller_input_nonce_share.serialize().into(),
-            sellers_warning_tx_buyer_input_nonce_share:
-            my_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.serialize().into(),
-            sellers_warning_tx_seller_input_nonce_share:
-            my_nonce_shares.sellers_warning_tx_seller_input_nonce_share.serialize().into(),
-            buyers_redirect_tx_input_nonce_share:
-            my_nonce_shares.buyers_redirect_tx_input_nonce_share.serialize().into(),
-            sellers_redirect_tx_input_nonce_share:
-            my_nonce_shares.sellers_redirect_tx_input_nonce_share.serialize().into(),
-        };
-
-        Ok(Response::new(response))
+            Ok(NonceSharesMessage {
+                warning_tx_fee_bump_address: "address1".to_owned(),
+                redirect_tx_fee_bump_address: "address2".to_owned(),
+                half_deposit_psbt: vec![],
+                swap_tx_input_nonce_share:
+                my_nonce_shares.swap_tx_input_nonce_share.serialize().into(),
+                buyers_warning_tx_buyer_input_nonce_share:
+                my_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.serialize().into(),
+                buyers_warning_tx_seller_input_nonce_share:
+                my_nonce_shares.buyers_warning_tx_seller_input_nonce_share.serialize().into(),
+                sellers_warning_tx_buyer_input_nonce_share:
+                my_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.serialize().into(),
+                sellers_warning_tx_seller_input_nonce_share:
+                my_nonce_shares.sellers_warning_tx_seller_input_nonce_share.serialize().into(),
+                buyers_redirect_tx_input_nonce_share:
+                my_nonce_shares.buyers_redirect_tx_input_nonce_share.serialize().into(),
+                sellers_redirect_tx_input_nonce_share:
+                my_nonce_shares.sellers_redirect_tx_input_nonce_share.serialize().into(),
+            })
+        })
     }
 
-    async fn get_partial_signatures(&self, request: Request<PartialSignaturesRequest>) -> Result<Response<PartialSignaturesMessage>, Status> {
-        println!("Got a request: {:?}", request);
+    async fn get_partial_signatures(&self, request: Request<PartialSignaturesRequest>) -> Result<Response<PartialSignaturesMessage>> {
+        handle_request(request, move |request, trade_model| {
+            let peer_nonce_shares = request.peers_nonce_shares
+                .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
+            trade_model.set_peer_nonce_shares(ExchangedNonces {
+                swap_tx_input_nonce_share:
+                peer_nonce_shares.swap_tx_input_nonce_share.my_try_into()?,
+                buyers_warning_tx_buyer_input_nonce_share:
+                peer_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+                buyers_warning_tx_seller_input_nonce_share:
+                peer_nonce_shares.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
+                sellers_warning_tx_buyer_input_nonce_share:
+                peer_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+                sellers_warning_tx_seller_input_nonce_share:
+                peer_nonce_shares.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
+                buyers_redirect_tx_input_nonce_share:
+                peer_nonce_shares.buyers_redirect_tx_input_nonce_share.my_try_into()?,
+                sellers_redirect_tx_input_nonce_share:
+                peer_nonce_shares.sellers_redirect_tx_input_nonce_share.my_try_into()?,
+            });
+            trade_model.aggregate_nonce_shares()?;
+            trade_model.sign_partial()?;
+            let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
+                .ok_or_else(|| Status::internal("missing partial signatures"))?;
 
-        let request = request.into_inner();
-        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
-            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
-        let mut trade_model = trade_model.lock().unwrap();
-        let peer_nonce_shares = request.peers_nonce_shares
-            .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
-        trade_model.set_peer_nonce_shares(ExchangedNonces {
-            swap_tx_input_nonce_share:
-            peer_nonce_shares.swap_tx_input_nonce_share.my_try_into()?,
-            buyers_warning_tx_buyer_input_nonce_share:
-            peer_nonce_shares.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-            buyers_warning_tx_seller_input_nonce_share:
-            peer_nonce_shares.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
-            sellers_warning_tx_buyer_input_nonce_share:
-            peer_nonce_shares.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-            sellers_warning_tx_seller_input_nonce_share:
-            peer_nonce_shares.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
-            buyers_redirect_tx_input_nonce_share:
-            peer_nonce_shares.buyers_redirect_tx_input_nonce_share.my_try_into()?,
-            sellers_redirect_tx_input_nonce_share:
-            peer_nonce_shares.sellers_redirect_tx_input_nonce_share.my_try_into()?,
-        });
-        trade_model.aggregate_nonce_shares()?;
-        trade_model.sign_partial()?;
-        let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
-            .ok_or_else(|| Status::internal("missing partial signatures"))?;
-        let response = PartialSignaturesMessage {
-            peers_warning_tx_buyer_input_partial_signature:
-            my_partial_signatures.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
-            peers_warning_tx_seller_input_partial_signature:
-            my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
-            peers_redirect_tx_input_partial_signature:
-            my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
-            swap_tx_input_partial_signature:
-            my_partial_signatures.swap_tx_input_partial_signature.map(|s| s.serialize().into()),
-        };
-
-        Ok(Response::new(response))
+            Ok(PartialSignaturesMessage {
+                peers_warning_tx_buyer_input_partial_signature:
+                my_partial_signatures.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
+                peers_warning_tx_seller_input_partial_signature:
+                my_partial_signatures.peers_warning_tx_seller_input_partial_signature.serialize().into(),
+                peers_redirect_tx_input_partial_signature:
+                my_partial_signatures.peers_redirect_tx_input_partial_signature.serialize().into(),
+                swap_tx_input_partial_signature:
+                my_partial_signatures.swap_tx_input_partial_signature.map(|s| s.serialize().into()),
+            })
+        })
     }
 
-    async fn sign_deposit_tx(&self, request: Request<DepositTxSignatureRequest>) -> Result<Response<DepositPsbt>, Status> {
-        println!("Got a request: {:?}", request);
+    async fn sign_deposit_tx(&self, request: Request<DepositTxSignatureRequest>) -> Result<Response<DepositPsbt>> {
+        handle_request(request, move |request, trade_model| {
+            let peers_partial_signatures = request.peers_partial_signatures
+                .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
+            trade_model.set_peer_partial_signatures_on_my_txs(&ExchangedSigs {
+                peers_warning_tx_buyer_input_partial_signature:
+                peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
+                peers_warning_tx_seller_input_partial_signature:
+                peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
+                peers_redirect_tx_input_partial_signature:
+                peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
+                swap_tx_input_partial_signature:
+                peers_partial_signatures.swap_tx_input_partial_signature.my_try_into()?,
+            });
+            trade_model.aggregate_partial_signatures()?;
 
-        let request = request.into_inner();
-        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
-            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
-        let mut trade_model = trade_model.lock().unwrap();
-        let peers_partial_signatures = request.peers_partial_signatures
-            .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
-        trade_model.set_peer_partial_signatures_on_my_txs(&ExchangedSigs {
-            peers_warning_tx_buyer_input_partial_signature:
-            peers_partial_signatures.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
-            peers_warning_tx_seller_input_partial_signature:
-            peers_partial_signatures.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
-            peers_redirect_tx_input_partial_signature:
-            peers_partial_signatures.peers_redirect_tx_input_partial_signature.my_try_into()?,
-            swap_tx_input_partial_signature:
-            peers_partial_signatures.swap_tx_input_partial_signature.my_try_into()?,
-        });
-        trade_model.aggregate_partial_signatures()?;
-        let response = DepositPsbt {
-            deposit_psbt: b"deposit_psbt".into()
-        };
-
-        Ok(Response::new(response))
+            Ok(DepositPsbt { deposit_psbt: b"deposit_psbt".into() })
+        })
     }
 
-    type PublishDepositTxStream = Pin<Box<dyn stream::Stream<Item=Result<TxConfirmationStatus, Status>> + Send>>;
+    type PublishDepositTxStream = Pin<Box<dyn stream::Stream<Item=Result<TxConfirmationStatus>> + Send>>;
 
-    async fn publish_deposit_tx(&self, request: Request<PublishDepositTxRequest>) -> Result<Response<Self::PublishDepositTxStream>, Status> {
-        println!("Got a request: {:?}", request);
+    async fn publish_deposit_tx(&self, request: Request<PublishDepositTxRequest>) -> Result<Response<Self::PublishDepositTxStream>> {
+        handle_request(request, move |_request, _trade_model| {
+            // TODO: *** BROADCAST DEPOSIT TX ***
 
-        let request = request.into_inner();
-        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
-            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
-        let mut _trade_model = trade_model.lock().unwrap();
+            let confirmation_event = TxConfirmationStatus {
+                tx: b"signed_deposit_tx".into(),
+                current_block_height: 900_001,
+                num_confirmations: 1,
+            };
 
-        // TODO: *** BROADCAST DEPOSIT TX ***
-
-        let confirmation_event = TxConfirmationStatus {
-            tx: b"signed_deposit_tx".into(),
-            current_block_height: 900_001,
-            num_confirmations: 1,
-        };
-
-        Ok(Response::new(Box::pin(stream::iter(iter::once(Ok(confirmation_event))))))
+            let stream: Self::PublishDepositTxStream = Box::pin(stream::iter(iter::once(Ok(confirmation_event))));
+            Ok(stream)
+        })
     }
 
-    async fn sign_swap_tx(&self, request: Request<SwapTxSignatureRequest>) -> Result<Response<SwapTxSignatureResponse>, Status> {
-        println!("Got a request: {:?}", request);
+    async fn sign_swap_tx(&self, request: Request<SwapTxSignatureRequest>) -> Result<Response<SwapTxSignatureResponse>> {
+        handle_request(request, move |request, trade_model| {
+            trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?);
+            trade_model.aggregate_swap_tx_partial_signatures()?;
+            let sig = trade_model.compute_swap_tx_input_signature()?;
+            let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
+                .ok_or_else(|| Status::internal("missing private key share"))?;
 
-        let request = request.into_inner();
-        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
-            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
-        let mut trade_model = trade_model.lock().unwrap();
-        trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?);
-        trade_model.aggregate_swap_tx_partial_signatures()?;
-        let sig = trade_model.compute_swap_tx_input_signature()?;
-        let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
-            .ok_or_else(|| Status::internal("missing private key share"))?;
-        let response = SwapTxSignatureResponse {
-            // For now, just set 'swap_tx' to be the (final) swap tx signature, rather than the actual signed tx:
-            swap_tx: sig.serialize().into(),
-            peer_output_prv_key_share: prv_key_share.serialize().into(),
-        };
-
-        Ok(Response::new(response))
+            Ok(SwapTxSignatureResponse {
+                // For now, just set 'swap_tx' to be the (final) swap tx signature, rather than the actual signed tx:
+                swap_tx: sig.serialize().into(),
+                peer_output_prv_key_share: prv_key_share.serialize().into(),
+            })
+        })
     }
 
-    async fn close_trade(&self, request: Request<CloseTradeRequest>) -> Result<Response<CloseTradeResponse>, Status> {
-        println!("Got a request: {:?}", request);
+    async fn close_trade(&self, request: Request<CloseTradeRequest>) -> Result<Response<CloseTradeResponse>> {
+        handle_request(request, move |request, trade_model| {
+            if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
+                // Trader receives the private key share from a cooperative peer, closing our trade.
+                trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
+                trade_model.aggregate_private_keys_for_my_output()?;
+            } else if let Some(swap_tx_input_signature) = request.swap_tx.my_try_into()? {
+                // Buyer supplies a signed swap tx to the Rust server, to close our trade. (Mainly for
+                // testing -- normally the tx would be picked up from the bitcoin network by the server.)
+                trade_model.recover_seller_private_key_share_for_buyer_output(&swap_tx_input_signature)?;
+                trade_model.aggregate_private_keys_for_my_output()?;
+            } else {
+                // Peer unresponsive -- force-close our trade by publishing the swap tx. For seller only.
+                // TODO: *** BROADCAST SWAP TX ***
+            }
+            let my_prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
+                .ok_or_else(|| Status::internal("missing private key share"))?;
 
-        let request = request.into_inner();
-        let trade_model = TRADE_MODELS.get_trade_model(&request.trade_id)
-            .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id)))?;
-        let mut trade_model = trade_model.lock().unwrap();
-        if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
-            // Trader receives the private key share from a cooperative peer, closing our trade.
-            trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
-            trade_model.aggregate_private_keys_for_my_output()?;
-        } else if let Some(swap_tx_input_signature) = request.swap_tx.my_try_into()? {
-            // Buyer supplies a signed swap tx to the Rust server, to close our trade. (Mainly for
-            // testing -- normally the tx would be picked up from the bitcoin network by the server.)
-            trade_model.recover_seller_private_key_share_for_buyer_output(&swap_tx_input_signature)?;
-            trade_model.aggregate_private_keys_for_my_output()?;
-        } else {
-            // Peer unresponsive -- force-close our trade by publishing the swap tx. For seller only.
-            // TODO: *** BROADCAST SWAP TX ***
-        }
-        let my_prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
-            .ok_or_else(|| Status::internal("missing private key share"))?;
-        let response = CloseTradeResponse {
-            peer_output_prv_key_share: my_prv_key_share.serialize().into(),
-        };
-
-        Ok(Response::new(response))
+            Ok(CloseTradeResponse { peer_output_prv_key_share: my_prv_key_share.serialize().into() })
+        })
     }
 }
+
+trait MusigRequest: std::fmt::Debug {
+    fn trade_id(&self) -> &str;
+}
+
+macro_rules! impl_musig_req {
+    ($request_type:ty) => {
+        impl MusigRequest for $request_type {
+            fn trade_id(&self) -> &str { &self.trade_id }
+        }
+    };
+}
+
+impl_musig_req!(PartialSignaturesRequest);
+impl_musig_req!(NonceSharesRequest);
+impl_musig_req!(DepositTxSignatureRequest);
+impl_musig_req!(PublishDepositTxRequest);
+impl_musig_req!(SwapTxSignatureRequest);
+impl_musig_req!(CloseTradeRequest);
+
+fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Response<Res>>
+    where Req: MusigRequest,
+          F: FnOnce(Req, &mut TradeModel) -> Result<Res> {
+    println!("Got a request: {:?}", request);
+
+    let request = request.into_inner();
+    let trade_model = TRADE_MODELS.get_trade_model(request.trade_id())
+        .ok_or_else(|| Status::not_found(format!("missing trade with id: {}", request.trade_id())))?;
+    let response = handler(request, &mut trade_model.lock().unwrap())?;
+
+    Ok(Response::new(response))
+}
+
+type Result<T, E = Status> = std::result::Result<T, E>;
 
 impl From<helloworld::Role> for Role {
     fn from(value: helloworld::Role) -> Self {
@@ -293,41 +293,27 @@ impl From<ProtocolErrorKind> for Status {
 }
 
 trait MyTryInto<T> {
-    fn my_try_into(self) -> Result<T, Status>;
+    fn my_try_into(self) -> Result<T>;
 }
 
-impl MyTryInto<Point> for &[u8] {
-    fn my_try_into(self) -> Result<Point, Status> {
-        self.try_into().map_err(|_| Status::invalid_argument("could not decode point"))
+macro_rules! impl_my_try_into_for_slice {
+    ($into_type:ty, $err_msg:literal) => {
+        impl MyTryInto<$into_type> for &[u8] {
+            fn my_try_into(self) -> Result<$into_type> {
+                self.try_into().map_err(|_| Status::invalid_argument($err_msg))
+            }
+        }
     }
 }
 
-impl MyTryInto<PubNonce> for &[u8] {
-    fn my_try_into(self) -> Result<PubNonce, Status> {
-        self.try_into().map_err(|_| Status::invalid_argument("could not decode pub nonce"))
-    }
-}
-
-impl MyTryInto<Scalar> for &[u8] {
-    fn my_try_into(self) -> Result<Scalar, Status> {
-        self.try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
-    }
-}
-
-impl MyTryInto<MaybeScalar> for &[u8] {
-    fn my_try_into(self) -> Result<MaybeScalar, Status> {
-        self.try_into().map_err(|_| Status::invalid_argument("could not decode scalar"))
-    }
-}
-
-impl MyTryInto<LiftedSignature> for &[u8] {
-    fn my_try_into(self) -> Result<LiftedSignature, Status> {
-        self.try_into().map_err(|_| Status::invalid_argument("could not decode signature"))
-    }
-}
+impl_my_try_into_for_slice!(Point, "could not decode nonzero point");
+impl_my_try_into_for_slice!(PubNonce, "could not decode pub nonce");
+impl_my_try_into_for_slice!(Scalar, "could not decode nonzero scalar");
+impl_my_try_into_for_slice!(MaybeScalar, "could not decode scalar");
+impl_my_try_into_for_slice!(LiftedSignature, "could not decode signature");
 
 impl MyTryInto<Role> for i32 {
-    fn my_try_into(self) -> Result<Role, Status> {
+    fn my_try_into(self) -> Result<Role> {
         TryInto::<helloworld::Role>::try_into(self)
             .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
             .map(Into::into)
@@ -335,11 +321,11 @@ impl MyTryInto<Role> for i32 {
 }
 
 impl<T> MyTryInto<T> for Vec<u8> where for<'a> &'a [u8]: MyTryInto<T> {
-    fn my_try_into(self) -> Result<T, Status> { (&self[..]).my_try_into() }
+    fn my_try_into(self) -> Result<T> { (&self[..]).my_try_into() }
 }
 
 impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
-    fn my_try_into(self) -> Result<Option<T>, Status> {
+    fn my_try_into(self) -> Result<Option<T>> {
         Ok(match self {
             None => None,
             Some(x) => Some(x.my_try_into()?)
