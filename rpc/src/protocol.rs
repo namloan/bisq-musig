@@ -1,3 +1,5 @@
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Network};
+use bdk_wallet::bitcoin::address::NetworkUnchecked;
 use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignature, PubNonce,
     SecNonce, SecNonceBuilder};
 use musig2::adaptor::AdaptorSignature;
@@ -33,13 +35,17 @@ pub static TRADE_MODELS: LazyLock<TradeModelMemoryStore> = LazyLock::new(|| Mute
 pub struct TradeModel {
     trade_id: String,
     my_role: Role,
-    pub trade_amount: Option<u64>,
-    pub buyers_security_deposit: Option<u64>,
-    pub sellers_security_deposit: Option<u64>,
-    pub deposit_tx_fee_rate: Option<f64>,
-    pub prepared_tx_fee_rate: Option<f64>,
+    pub trade_amount: Option<Amount>,
+    pub buyers_security_deposit: Option<Amount>,
+    pub sellers_security_deposit: Option<Amount>,
+    pub deposit_tx_fee_rate: Option<FeeRate>,
+    pub prepared_tx_fee_rate: Option<FeeRate>,
     buyer_output_key_ctx: KeyCtx,
     seller_output_key_ctx: KeyCtx,
+    buyers_warning_tx_fee_bump_address: Option<Address>,
+    sellers_warning_tx_fee_bump_address: Option<Address>,
+    buyers_redirect_tx_fee_bump_address: Option<Address>,
+    sellers_redirect_tx_fee_bump_address: Option<Address>,
     swap_tx_input_sig_ctx: SigCtx,
     buyers_warning_tx_buyer_input_sig_ctx: SigCtx,
     buyers_warning_tx_seller_input_sig_ctx: SigCtx,
@@ -159,6 +165,45 @@ impl TradeModel {
     pub fn aggregate_key_shares(&mut self) -> Result<()> {
         self.buyer_output_key_ctx.aggregate_key_shares()?;
         self.seller_output_key_ctx.aggregate_key_shares()?;
+        Ok(())
+    }
+
+    pub fn init_my_fee_bump_addresses(&mut self) -> Result<()> {
+        // TODO: Replace dummy addresses with real ones provided by a service, say by passing in a
+        //  suitable service or context object. (Need to make the network configurable as well.)
+        if self.am_buyer() {
+            self.buyers_warning_tx_fee_bump_address = Some("tb1pkar3gerekw8f9gef9vn9xz0qypytgacp9wa5saelpksdgct33qdqs257jl"
+                .parse::<Address<_>>()?.require_network(Network::Signet)?);
+            self.buyers_redirect_tx_fee_bump_address = Some("tb1pv537m7m6w0gdrcdn3mqqdpgrk3j400yrdrjwf5c9whyl2f8f4p6qg5eh2l"
+                .parse::<Address<_>>()?.require_network(Network::Signet)?);
+        } else {
+            self.sellers_warning_tx_fee_bump_address = Some("tb1pzvynlely05x82u40cts3znctmvyskue74xa5zwy0t5ueuv92726s0cz8g8"
+                .parse::<Address<_>>()?.require_network(Network::Signet)?);
+            self.sellers_redirect_tx_fee_bump_address = Some("tb1pt5xd4aqe9whmvlz78mt39rvdlgpp6hujs5ggwan5285zjnsf73rq8kunpq"
+                .parse::<Address<_>>()?.require_network(Network::Signet)?);
+        }
+        Ok(())
+    }
+
+    pub fn get_my_fee_bump_addresses(&self) -> Option<[&Address; 2]> {
+        Some(if self.am_buyer() {
+            [self.buyers_warning_tx_fee_bump_address.as_ref()?, self.buyers_redirect_tx_fee_bump_address.as_ref()?]
+        } else {
+            [self.sellers_warning_tx_fee_bump_address.as_ref()?, self.sellers_redirect_tx_fee_bump_address.as_ref()?]
+        })
+    }
+
+    pub fn set_peer_fee_bump_addresses(&mut self, fee_bump_addresses: [Address<NetworkUnchecked>; 2]) -> Result<()> {
+        // TODO: Make the required network configurable and enforced to match the one above:
+        let (warning_tx_fee_bump_address, redirect_tx_fee_bump_address) = fee_bump_addresses
+            .map(|addr| addr.require_network(Network::Signet)).into();
+        if self.am_buyer() {
+            self.sellers_warning_tx_fee_bump_address = Some(warning_tx_fee_bump_address?);
+            self.sellers_redirect_tx_fee_bump_address = Some(redirect_tx_fee_bump_address?);
+        } else {
+            self.buyers_warning_tx_fee_bump_address = Some(warning_tx_fee_bump_address?);
+            self.buyers_redirect_tx_fee_bump_address = Some(redirect_tx_fee_bump_address?);
+        }
         Ok(())
     }
 
@@ -555,4 +600,5 @@ pub enum ProtocolErrorKind {
     Verify(#[from] musig2::errors::VerifyError),
     InvalidSecretKeys(#[from] musig2::errors::InvalidSecretKeysError),
     ZeroScalar(#[from] secp::errors::ZeroScalarError),
+    AddressParse(#[from] bdk_wallet::bitcoin::address::ParseError),
 }

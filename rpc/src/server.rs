@@ -1,6 +1,8 @@
 mod protocol;
 mod storage;
 
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate};
+use bdk_wallet::bitcoin::address::NetworkUnchecked;
 use futures::stream;
 use musig2::{LiftedSignature, PubNonce};
 use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
@@ -62,18 +64,22 @@ impl Musig for MusigImpl {
                 request.buyer_output_peers_pub_key_share.my_try_into()?,
                 request.seller_output_peers_pub_key_share.my_try_into()?);
             trade_model.aggregate_key_shares()?;
+            trade_model.trade_amount = Some(Amount::from_sat(request.trade_amount));
+            trade_model.buyers_security_deposit = Some(Amount::from_sat(request.buyers_security_deposit));
+            trade_model.sellers_security_deposit = Some(Amount::from_sat(request.sellers_security_deposit));
+            trade_model.deposit_tx_fee_rate = Some(FeeRate::from_sat_per_kwu(request.deposit_tx_fee_rate));
+            trade_model.prepared_tx_fee_rate = Some(FeeRate::from_sat_per_kwu(request.prepared_tx_fee_rate));
+            trade_model.init_my_fee_bump_addresses()?;
             trade_model.init_my_nonce_shares()?;
-            trade_model.trade_amount = Some(request.trade_amount);
-            trade_model.buyers_security_deposit = Some(request.buyers_security_deposit);
-            trade_model.sellers_security_deposit = Some(request.sellers_security_deposit);
-            trade_model.deposit_tx_fee_rate = Some(request.deposit_tx_fee_rate);
-            trade_model.prepared_tx_fee_rate = Some(request.prepared_tx_fee_rate);
+
+            let my_fee_bump_addresses = trade_model.get_my_fee_bump_addresses()
+                .ok_or_else(|| Status::internal("missing fee bump addresses"))?;
             let my_nonce_shares = trade_model.get_my_nonce_shares()
                 .ok_or_else(|| Status::internal("missing nonce shares"))?;
 
             Ok(NonceSharesMessage {
-                warning_tx_fee_bump_address: "address1".to_owned(),
-                redirect_tx_fee_bump_address: "address2".to_owned(),
+                warning_tx_fee_bump_address: my_fee_bump_addresses[0].to_string(),
+                redirect_tx_fee_bump_address: my_fee_bump_addresses[1].to_string(),
                 half_deposit_psbt: vec![],
                 ..my_nonce_shares.into()
             })
@@ -84,6 +90,10 @@ impl Musig for MusigImpl {
         handle_request(request, move |request, trade_model| {
             let peer_nonce_shares = request.peers_nonce_shares
                 .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
+            trade_model.set_peer_fee_bump_addresses([
+                (&peer_nonce_shares.warning_tx_fee_bump_address).my_try_into()?,
+                (&peer_nonce_shares.redirect_tx_fee_bump_address).my_try_into()?
+            ])?;
             trade_model.set_peer_nonce_shares(peer_nonce_shares.my_try_into()?);
             trade_model.aggregate_nonce_shares()?;
             trade_model.sign_partial()?;
@@ -237,6 +247,13 @@ impl MyTryInto<Role> for i32 {
         TryInto::<musigrpc::Role>::try_into(self)
             .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
             .map(Into::into)
+    }
+}
+
+impl MyTryInto<Address<NetworkUnchecked>> for &str {
+    fn my_try_into(self) -> Result<Address<NetworkUnchecked>> {
+        self.parse::<Address<_>>()
+            .map_err(|e| Status::invalid_argument(format!("could not parse address: {}", e)))
     }
 }
 

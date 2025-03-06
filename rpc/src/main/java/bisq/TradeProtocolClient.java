@@ -59,11 +59,11 @@ public class TradeProtocolClient {
                 .setTradeId(sellerTradeId)
                 .setBuyerOutputPeersPubKeyShare(buyerPubKeyShareResponse.getBuyerOutputPubKeyShare())
                 .setSellerOutputPeersPubKeyShare(buyerPubKeyShareResponse.getSellerOutputPubKeyShare())
-                .setDepositTxFeeRate(12.5)
-                .setPreparedTxFeeRate(10.0)
-                .setTradeAmount(200000)
-                .setBuyersSecurityDeposit(30000)
-                .setSellersSecurityDeposit(30000)
+                .setDepositTxFeeRate(50_000)  // 12.5 sats per vbyte
+                .setPreparedTxFeeRate(40_000) // 10.0 sats per vbyte
+                .setTradeAmount(200_000)
+                .setBuyersSecurityDeposit(30_000)
+                .setSellersSecurityDeposit(30_000)
                 .build());
         System.out.println("Got reply: " + sellerNonceShareMessage);
 
@@ -73,11 +73,11 @@ public class TradeProtocolClient {
                 .setTradeId(buyerTradeId)
                 .setBuyerOutputPeersPubKeyShare(sellerPubKeyShareResponse.getBuyerOutputPubKeyShare())
                 .setSellerOutputPeersPubKeyShare(sellerPubKeyShareResponse.getSellerOutputPubKeyShare())
-                .setDepositTxFeeRate(12.5)
-                .setPreparedTxFeeRate(10.0)
-                .setTradeAmount(200000)
-                .setBuyersSecurityDeposit(30000)
-                .setSellersSecurityDeposit(30000)
+                .setDepositTxFeeRate(50_000)  // 12.5 sats per vbyte
+                .setPreparedTxFeeRate(40_000) // 10.0 sats per vbyte
+                .setTradeAmount(200_000)
+                .setBuyersSecurityDeposit(30_000)
+                .setSellersSecurityDeposit(30_000)
                 .build());
         System.out.println("Got reply: " + buyerNonceShareMessage);
 
