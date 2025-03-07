@@ -1,5 +1,5 @@
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Network};
-use bdk_wallet::bitcoin::address::NetworkUnchecked;
+use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked, NetworkValidation};
 use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignature, PubNonce,
     SecNonce, SecNonceBuilder};
 use musig2::adaptor::AdaptorSignature;
@@ -46,6 +46,7 @@ pub struct TradeModel {
     sellers_warning_tx_fee_bump_address: Option<Address>,
     buyers_redirect_tx_fee_bump_address: Option<Address>,
     sellers_redirect_tx_fee_bump_address: Option<Address>,
+    redirection_receivers: Option<Vec<RedirectionReceiver>>,
     swap_tx_input_sig_ctx: SigCtx,
     buyers_warning_tx_buyer_input_sig_ctx: SigCtx,
     buyers_warning_tx_seller_input_sig_ctx: SigCtx,
@@ -82,6 +83,17 @@ pub struct ExchangedSigs<'a, S: Storage> {
     pub peers_warning_tx_seller_input_partial_signature: S::Store<'a, PartialSignature>,
     pub peers_redirect_tx_input_partial_signature: S::Store<'a, PartialSignature>,
     pub swap_tx_input_partial_signature: Option<S::Store<'a, PartialSignature>>,
+}
+
+pub struct RedirectionReceiver<V: NetworkValidation = NetworkChecked> {
+    pub address: Address<V>,
+    pub amount: Amount,
+}
+
+impl RedirectionReceiver<NetworkUnchecked> {
+    fn require_network(self, required: Network) -> Result<RedirectionReceiver> {
+        Ok(RedirectionReceiver { address: self.address.require_network(required)?, amount: self.amount })
+    }
 }
 
 pub struct KeyPair<PrvKey: ValStorage = ByVal> {
@@ -204,6 +216,20 @@ impl TradeModel {
             self.buyers_warning_tx_fee_bump_address = Some(warning_tx_fee_bump_address?);
             self.buyers_redirect_tx_fee_bump_address = Some(redirect_tx_fee_bump_address?);
         }
+        Ok(())
+    }
+
+    pub fn set_redirection_receivers<I, E>(&mut self, receivers: I) -> Result<(), E>
+        where I: IntoIterator<Item=Result<RedirectionReceiver<NetworkUnchecked>, E>>,
+              E: From<ProtocolErrorKind>
+    {
+        // TODO: Make the required network configurable and enforced to match the ones above.
+        let mut vec = Vec::new();
+        for receiver in receivers {
+            vec.push(receiver?.require_network(Network::Signet)?);
+        }
+        vec.shrink_to_fit();
+        self.redirection_receivers = Some(vec);
         Ok(())
     }
 
@@ -570,7 +596,7 @@ impl SigCtx {
     }
 }
 
-type Result<T> = std::result::Result<T, ProtocolErrorKind>;
+type Result<T, E = ProtocolErrorKind> = std::result::Result<T, E>;
 
 #[derive(Error, Debug)]
 #[error(transparent)]

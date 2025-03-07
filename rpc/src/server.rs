@@ -7,8 +7,8 @@ use futures::stream;
 use musig2::{LiftedSignature, PubNonce};
 use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
     NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage, PartialSignaturesRequest,
-    PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest, SwapTxSignatureRequest,
-    SwapTxSignatureResponse, TxConfirmationStatus};
+    PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest, ReceiverAddressAndAmount,
+    SwapTxSignatureRequest, SwapTxSignatureResponse, TxConfirmationStatus};
 use musigrpc::musig_server::{Musig, MusigServer};
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
@@ -18,8 +18,8 @@ use std::prelude::rust_2021::*;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
-use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Role, TradeModel,
-    TradeModelStore as _, TRADE_MODELS};
+use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, RedirectionReceiver, Role,
+    TradeModel, TradeModelStore as _, TRADE_MODELS};
 use crate::storage::{ByRef, ByVal};
 
 pub mod musigrpc {
@@ -94,6 +94,7 @@ impl Musig for MusigImpl {
                 (&peer_nonce_shares.warning_tx_fee_bump_address).my_try_into()?,
                 (&peer_nonce_shares.redirect_tx_fee_bump_address).my_try_into()?
             ])?;
+            trade_model.set_redirection_receivers(request.receivers.into_iter().map(MyTryInto::my_try_into))?;
             trade_model.set_peer_nonce_shares(peer_nonce_shares.my_try_into()?);
             trade_model.aggregate_nonce_shares()?;
             trade_model.sign_partial()?;
@@ -254,6 +255,15 @@ impl MyTryInto<Address<NetworkUnchecked>> for &str {
     fn my_try_into(self) -> Result<Address<NetworkUnchecked>> {
         self.parse::<Address<_>>()
             .map_err(|e| Status::invalid_argument(format!("could not parse address: {}", e)))
+    }
+}
+
+impl MyTryInto<RedirectionReceiver<NetworkUnchecked>> for ReceiverAddressAndAmount {
+    fn my_try_into(self) -> Result<RedirectionReceiver<NetworkUnchecked>> {
+        Ok(RedirectionReceiver {
+            address: self.address.my_try_into()?,
+            amount: Amount::from_sat(self.amount),
+        })
     }
 }
 

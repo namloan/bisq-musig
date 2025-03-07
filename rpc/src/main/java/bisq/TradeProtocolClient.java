@@ -1,9 +1,13 @@
 package bisq;
 
+import com.google.common.collect.ImmutableMap;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import musigrpc.MusigGrpc;
 import musigrpc.Rpc.*;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class TradeProtocolClient {
     public static void main(String[] args) {
@@ -84,6 +88,7 @@ public class TradeProtocolClient {
         var buyerPartialSignatureMessage = stub.getPartialSignatures(PartialSignaturesRequest.newBuilder()
                 .setTradeId(buyerTradeId)
                 .setPeersNonceShares(sellerNonceShareMessage)
+                .addAllReceivers(mockReceivers())
                 .build());
         System.out.println("Got reply: " + buyerPartialSignatureMessage);
 
@@ -92,6 +97,7 @@ public class TradeProtocolClient {
         var sellerPartialSignatureMessage = stub.getPartialSignatures(PartialSignaturesRequest.newBuilder()
                 .setTradeId(sellerTradeId)
                 .setPeersNonceShares(buyerNonceShareMessage)
+                .addAllReceivers(mockReceivers())
                 .build());
         System.out.println("Got reply: " + sellerPartialSignatureMessage);
 
@@ -168,5 +174,17 @@ public class TradeProtocolClient {
             System.out.println("Got reply: " + buyersCloseTradeResponse);
             // **************************
         }
+    }
+
+    @SuppressWarnings("SpellCheckingInspection")
+    private static List<ReceiverAddressAndAmount> mockReceivers() {
+        return ImmutableMap.of(
+                        "tb1pwxlp4v9v7v03nx0e7vunlc87d4936wnyqegw0fuahudypan64wys5stxh7", 200_000,
+                        "tb1qpg889v22f3gefuvwpe3963t5a00nvfmkhlgqw5", 80_000,
+                        "2N2x2bA28AsLZZEHss4SjFoyToQV5YYZsJM", 12_345
+                )
+                .entrySet().stream()
+                .map(e -> ReceiverAddressAndAmount.newBuilder().setAddress(e.getKey()).setAmount(e.getValue()).build())
+                .collect(Collectors.toList());
     }
 }
