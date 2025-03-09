@@ -1,5 +1,6 @@
 mod protocol;
 mod storage;
+mod walletrpc;
 
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate};
 use bdk_wallet::bitcoin::address::NetworkUnchecked;
@@ -9,7 +10,7 @@ use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSign
     NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage, PartialSignaturesRequest,
     PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest, ReceiverAddressAndAmount,
     SwapTxSignatureRequest, SwapTxSignatureResponse, TxConfirmationStatus};
-use musigrpc::musig_server::{Musig, MusigServer};
+use musigrpc::musig_server::{self, MusigServer};
 use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
@@ -21,8 +22,11 @@ use tonic::transport::Server;
 use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, RedirectionReceiver, Role,
     TradeModel, TradeModelStore as _, TRADE_MODELS};
 use crate::storage::{ByRef, ByVal};
+use crate::walletrpc::{ListUnspentRequest, ListUnspentResponse, NewAddressRequest,
+    NewAddressResponse, WalletBalanceRequest, WalletBalanceResponse};
+use crate::walletrpc::wallet_server::{self, WalletServer};
 
-pub mod musigrpc {
+mod musigrpc {
     #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
     tonic::include_proto!("musigrpc");
 }
@@ -39,7 +43,7 @@ pub struct MusigImpl {}
 //  never hold secrets which directly control funds (but doing so makes the RPC interface a little
 //  bigger and less symmetrical.)
 #[tonic::async_trait]
-impl Musig for MusigImpl {
+impl musig_server::Musig for MusigImpl {
     async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>> {
         println!("Got a request: {:?}", request);
 
@@ -169,6 +173,31 @@ impl Musig for MusigImpl {
 
             Ok(CloseTradeResponse { peer_output_prv_key_share: my_prv_key_share.serialize().into() })
         })
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct WalletImpl {}
+
+#[tonic::async_trait]
+impl wallet_server::Wallet for WalletImpl {
+    async fn wallet_balance(&self, request: Request<WalletBalanceRequest>) -> Result<Response<WalletBalanceResponse>> {
+        println!("Got a request: {:?}", request);
+
+        Ok(Response::new(WalletBalanceResponse {
+            immature: 0,
+            trusted_pending: 0,
+            untrusted_pending: 0,
+            confirmed: 0,
+        }))
+    }
+
+    async fn new_address(&self, _request: tonic::Request<NewAddressRequest>) -> Result<Response<NewAddressResponse>> {
+        Err(Status::unimplemented("not implemented yet"))
+    }
+
+    async fn list_unspent(&self, _request: tonic::Request<ListUnspentRequest>) -> Result<Response<ListUnspentResponse>> {
+        Err(Status::unimplemented("not implemented yet"))
     }
 }
 
@@ -361,9 +390,11 @@ impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:50051".parse()?;
     let musig = MusigImpl::default();
+    let wallet = WalletImpl::default();
 
     Server::builder()
         .add_service(MusigServer::new(musig))
+        .add_service(WalletServer::new(wallet))
         .serve(addr)
         .await?;
 

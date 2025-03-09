@@ -16,6 +16,13 @@ See [MuSig trade protocol messages](musig-trade-protocol-messages.txt) for my cu
 trade messages between the peers would look like, and thus the necessary data to exchange in an RPC interface between
 the Bisq2 client and the Rust server managing the wallet and key material.
 
+### Experimental wallet gRPC interface and test CLI
+
+To help test and develop the wallet and chain notification API that will be needed by Bisq, a small Rust gRPC client
+with a command-line interface is also included as a binary target (`musig-cli`). Currently, this is providing access to
+a handful of experimental wallet RPC endpoints that will talk to BDK to get account balance, UTXO set, block reorg
+notifications, etc. (but are not yet implemented).
+
 ### Building and running the code
 
 The Rust gRPC server listens on localhost port 50051.
@@ -28,10 +35,16 @@ The Rust gRPC server listens on localhost port 50051.
 2. To build and run the Rust server, run:
 
 ```sh
-cargo run --bin server
+cargo run --bin musigd
 ```
 
-3. To build and run the Java gRPC test client, run:
+3. To build and run the Rust wallet CLI client (default-run), just run:
+
+```sh
+cargo run
+```
+
+4. To build and run the Java gRPC test client to carry out a mock trade, run:
 
 ```sh
 mvn install exec:java
