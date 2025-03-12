@@ -21,7 +21,19 @@ the Bisq2 client and the Rust server managing the wallet and key material.
 To help test and develop the wallet and chain notification API that will be needed by Bisq, a small Rust gRPC client
 with a command-line interface is also included as a binary target (`musig-cli`). Currently, this is providing access to
 a handful of experimental wallet RPC endpoints that will talk to BDK to get account balance, UTXO set, block reorg
-notifications, etc. (but are not yet implemented).
+notifications, etc. (only partially implemented).
+
+The wallet is currently just hardwired to use _regtest_, without persistence. It uses the `bdk_bitcoind_rpc`
+crate to talk to a local `bitcoind` instance via JSON-RPC on port 18443, authenticated with cookies and with
+data-dir `$PWD/.localnet/bitcoind`. It does a full scan once upon startup, with continual syncing yet to be implemented.
+A `bitcoind` regtest instance may be started up as follows, from the PWD:
+
+```sh
+bitcoind -regtest -prune=0 -txindex=1 -blockfilterindex=1 -server -datadir=.localnet/bitcoind
+```
+
+The `-txindex` and `-blockfilterindex` (compact filters) options aren't presently needed but may be at some point, to
+make an RPC backend scalable enough to use with a full node on _mainnet_.
 
 ### Building and running the code
 

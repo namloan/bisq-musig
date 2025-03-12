@@ -14,8 +14,8 @@ message WalletBalanceRequest {
 
 message WalletBalanceResponse {
   uint64 immature = 1;
-  uint64 trusted_pending = 2;
-  uint64 untrusted_pending = 3;
+  uint64 trustedPending = 2;
+  uint64 untrustedPending = 3;
   uint64 confirmed = 4;
 }
 
@@ -24,7 +24,7 @@ message NewAddressRequest {
 
 message NewAddressResponse {
   string address = 1;
-  string derivation_path = 2;
+  string derivationPath = 2;
 }
 
 message ListUnspentRequest {
@@ -36,6 +36,7 @@ message ListUnspentResponse {
 
 message TransactionOutput {
   string txId = 1;
-  bytes script_pubkey = 2;
-  uint64 value = 3;
+  uint32 vout = 2;
+  bytes scriptPubKey = 3;
+  uint64 value = 4;
 }
