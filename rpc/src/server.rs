@@ -3,8 +3,11 @@ mod storage;
 mod wallet;
 mod walletrpc;
 
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Txid};
 use bdk_wallet::bitcoin::address::NetworkUnchecked;
+use bdk_wallet::bitcoin::consensus::Encodable as _;
+use bdk_wallet::bitcoin::hashes::Hash as _;
+use bdk_wallet::chain::ChainPosition;
 use futures::stream;
 use musig2::{LiftedSignature, PubNonce};
 use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
@@ -25,9 +28,10 @@ use tonic::transport::Server;
 use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, RedirectionReceiver, Role,
     TradeModel, TradeModelStore as _, TRADE_MODELS};
 use crate::storage::{ByRef, ByVal};
-use crate::wallet::{WalletService, WalletServiceImpl};
-use crate::walletrpc::{ListUnspentRequest, ListUnspentResponse, NewAddressRequest,
-    NewAddressResponse, TransactionOutput, WalletBalanceRequest, WalletBalanceResponse};
+use crate::wallet::{TxConfidence, WalletService, WalletServiceImpl};
+use crate::walletrpc::{ConfEvent, ConfRequest, ConfidenceType, ListUnspentRequest,
+    ListUnspentResponse, NewAddressRequest, NewAddressResponse, TransactionOutput,
+    WalletBalanceRequest, WalletBalanceResponse};
 use crate::walletrpc::wallet_server::{self, WalletServer};
 
 mod musigrpc {
@@ -199,7 +203,7 @@ impl wallet_server::Wallet for WalletImpl {
         }))
     }
 
-    async fn new_address(&self, request: tonic::Request<NewAddressRequest>) -> Result<Response<NewAddressResponse>> {
+    async fn new_address(&self, request: Request<NewAddressRequest>) -> Result<Response<NewAddressResponse>> {
         println!("Got a request: {:?}", request);
 
         let address = self.wallet_service.reveal_next_address();
@@ -210,12 +214,12 @@ impl wallet_server::Wallet for WalletImpl {
         }))
     }
 
-    async fn list_unspent(&self, request: tonic::Request<ListUnspentRequest>) -> Result<Response<ListUnspentResponse>> {
+    async fn list_unspent(&self, request: Request<ListUnspentRequest>) -> Result<Response<ListUnspentResponse>> {
         println!("Got a request: {:?}", request);
 
         let utxos: Vec<_> = self.wallet_service.list_unspent().into_iter()
             .map(|o: bdk_wallet::LocalOutput| TransactionOutput {
-                tx_id: o.outpoint.txid.to_string(),
+                tx_id: o.outpoint.txid.as_byte_array().into(),
                 vout: o.outpoint.vout,
                 script_pub_key: o.txout.script_pubkey.into_bytes(),
                 value: o.txout.value.to_sat(),
@@ -223,6 +227,37 @@ impl wallet_server::Wallet for WalletImpl {
             .collect();
 
         Ok(Response::new(ListUnspentResponse { utxos }))
+    }
+
+    type RegisterConfidenceNtfnStream = Pin<Box<dyn stream::Stream<Item=Result<ConfEvent>> + Send>>;
+
+    async fn register_confidence_ntfn(&self, request: Request<ConfRequest>) -> Result<Response<Self::RegisterConfidenceNtfnStream>> {
+        println!("Got a request: {:?}", request);
+
+        let txid = request.into_inner().tx_id.my_try_into()?;
+        let TxConfidence { wallet_tx, num_confirmations } = self.wallet_service.get_tx_confidence(txid)
+            .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?;
+
+        let mut raw_tx = Vec::new();
+        wallet_tx.tx.consensus_encode(&mut raw_tx).unwrap();
+        let (confidence_type, confirmation_block_time) = match wallet_tx.chain_position {
+            ChainPosition::Confirmed { anchor, .. } =>
+                (ConfidenceType::Confirmed, Some(walletrpc::ConfirmationBlockTime {
+                    block_hash: anchor.block_id.hash.as_byte_array().to_vec(),
+                    block_height: anchor.block_id.height,
+                    confirmation_time: anchor.confirmation_time,
+                })),
+            ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
+        };
+        let conf_event = ConfEvent {
+            raw_tx,
+            confidence_type: confidence_type.into(),
+            num_confirmations,
+            confirmation_block_time,
+        };
+
+        let stream: Self::RegisterConfidenceNtfnStream = Box::pin(stream::iter(iter::once(Ok(conf_event))));
+        Ok(Response::new(stream))
     }
 }
 
@@ -296,6 +331,12 @@ impl_my_try_into_for_slice!(PubNonce, "could not decode pub nonce");
 impl_my_try_into_for_slice!(Scalar, "could not decode nonzero scalar");
 impl_my_try_into_for_slice!(MaybeScalar, "could not decode scalar");
 impl_my_try_into_for_slice!(LiftedSignature, "could not decode signature");
+
+impl MyTryInto<Txid> for &[u8] {
+    fn my_try_into(self) -> Result<Txid> {
+        Txid::from_slice(self).map_err(|_| Status::invalid_argument("could not decode txid"))
+    }
+}
 
 impl MyTryInto<Role> for i32 {
     fn my_try_into(self) -> Result<Role> {

@@ -7,6 +7,8 @@ service Wallet {
   rpc NewAddress (NewAddressRequest) returns (NewAddressResponse);
 
   rpc ListUnspent (ListUnspentRequest) returns (ListUnspentResponse);
+
+  rpc RegisterConfidenceNtfn (ConfRequest) returns (stream ConfEvent);
 }
 
 message WalletBalanceRequest {
@@ -35,8 +37,30 @@ message ListUnspentResponse {
 }
 
 message TransactionOutput {
-  string txId = 1;
+  bytes txId = 1;
   uint32 vout = 2;
   bytes scriptPubKey = 3;
   uint64 value = 4;
+}
+
+message ConfRequest {
+  bytes txId = 1;
+}
+
+message ConfEvent {
+  bytes rawTx = 1;
+  ConfidenceType confidenceType = 2;
+  uint32 numConfirmations = 3;
+  optional ConfirmationBlockTime confirmationBlockTime = 4;
+}
+
+enum ConfidenceType {
+  CONFIRMED = 0;
+  UNCONFIRMED = 1;
+}
+
+message ConfirmationBlockTime {
+  bytes blockHash = 1;
+  uint32 blockHeight = 2;
+  uint64 confirmationTime = 3;
 }
