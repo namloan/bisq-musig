@@ -43,11 +43,14 @@ mod tests {
         assert!(alice.q_tik.agg_point == bob.q_tik.agg_point);
 
         // Round 3 ----------
+        // let alice_sig_p = alice.warning_tx_me.sig_p.as_ref().unwrap();
+        // let alice_adaptor_p = alice_sig_p.adaptor_sig.as_ref().unwrap();
+
+
         let alice_r3 = alice.round3(bob_r2)?;
         let bob_r3 = bob.round3(alice_r2)?;
 
         assert_eq!(alice_r3.deposit_txid, bob_r3.deposit_txid);
-        dbg!(&alice_r3.deposit_txid);
 
         // Round 4 ---------------------------
         let alice_r4 = alice.round4(bob_r3)?;
@@ -57,9 +60,17 @@ mod tests {
         alice.round5(bob_r4)?;
         bob.round5(alice_r4)?;
 
-
         // done -----------------------------
         crate::nigiri::tiktok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_warning() -> anyhow::Result<()> {
+        // create all transaction and Broadcast DepositTx already
+        // let (alice, bob) = test_musig()?;
+        // alice broadcats WarningTx
+        // alice.warning_tx_me.broadcast(alice.ctx);
         Ok(())
     }
 }
