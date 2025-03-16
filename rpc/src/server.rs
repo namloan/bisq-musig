@@ -3,6 +3,7 @@ mod storage;
 mod wallet;
 mod walletrpc;
 
+use bdk_wallet::{Balance, LocalOutput};
 use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Txid};
 use bdk_wallet::bitcoin::address::NetworkUnchecked;
 use bdk_wallet::bitcoin::consensus::Encodable as _;
@@ -191,14 +192,9 @@ impl wallet_server::Wallet for WalletImpl {
     async fn wallet_balance(&self, request: Request<WalletBalanceRequest>) -> Result<Response<WalletBalanceResponse>> {
         println!("Got a request: {:?}", request);
 
-        let balance = self.wallet_service.balance();
+        let balance = self.wallet_service.balance().into();
 
-        Ok(Response::new(WalletBalanceResponse {
-            immature: balance.immature.to_sat(),
-            trusted_pending: balance.trusted_pending.to_sat(),
-            untrusted_pending: balance.untrusted_pending.to_sat(),
-            confirmed: balance.confirmed.to_sat(),
-        }))
+        Ok(Response::new(balance))
     }
 
     async fn new_address(&self, request: Request<NewAddressRequest>) -> Result<Response<NewAddressResponse>> {
@@ -208,7 +204,7 @@ impl wallet_server::Wallet for WalletImpl {
 
         Ok(Response::new(NewAddressResponse {
             address: address.address.to_string(),
-            derivation_path: format!("m/86'/1'/0'/{}", address.index),
+            derivation_path: format!("m/86'/1'/0'/0/{}", address.index),
         }))
     }
 
@@ -216,12 +212,7 @@ impl wallet_server::Wallet for WalletImpl {
         println!("Got a request: {:?}", request);
 
         let utxos: Vec<_> = self.wallet_service.list_unspent().into_iter()
-            .map(|o: bdk_wallet::LocalOutput| TransactionOutput {
-                tx_id: o.outpoint.txid.as_byte_array().into(),
-                vout: o.outpoint.vout,
-                script_pub_key: o.txout.script_pubkey.into_bytes(),
-                value: o.txout.value.to_sat(),
-            })
+            .map(Into::into)
             .collect();
 
         Ok(Response::new(ListUnspentResponse { utxos }))
@@ -235,25 +226,7 @@ impl wallet_server::Wallet for WalletImpl {
         let txid = request.into_inner().tx_id.my_try_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
             .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?
-            .map(|TxConfidence { wallet_tx, num_confirmations }| {
-                let mut raw_tx = Vec::new();
-                wallet_tx.tx.consensus_encode(&mut raw_tx).unwrap();
-                let (confidence_type, confirmation_block_time) = match wallet_tx.chain_position {
-                    ChainPosition::Confirmed { anchor, .. } =>
-                        (ConfidenceType::Confirmed, Some(walletrpc::ConfirmationBlockTime {
-                            block_hash: anchor.block_id.hash.as_byte_array().to_vec(),
-                            block_height: anchor.block_id.height,
-                            confirmation_time: anchor.confirmation_time,
-                        })),
-                    ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
-                };
-                Ok(ConfEvent {
-                    raw_tx,
-                    confidence_type: confidence_type.into(),
-                    num_confirmations,
-                    confirmation_block_time,
-                })
-            })
+            .map(|o| Ok(o.into()))
             .boxed();
 
         Ok(Response::new(conf_events))
@@ -448,6 +421,50 @@ impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
             swap_tx_input_partial_signature:
             self.swap_tx_input_partial_signature.my_try_into()?,
         })
+    }
+}
+
+impl From<Balance> for WalletBalanceResponse {
+    fn from(value: Balance) -> Self {
+        WalletBalanceResponse {
+            immature: value.immature.to_sat(),
+            trusted_pending: value.trusted_pending.to_sat(),
+            untrusted_pending: value.untrusted_pending.to_sat(),
+            confirmed: value.confirmed.to_sat(),
+        }
+    }
+}
+
+impl From<LocalOutput> for TransactionOutput {
+    fn from(value: LocalOutput) -> Self {
+        TransactionOutput {
+            tx_id: value.outpoint.txid.as_byte_array().into(),
+            vout: value.outpoint.vout,
+            script_pub_key: value.txout.script_pubkey.into_bytes(),
+            value: value.txout.value.to_sat(),
+        }
+    }
+}
+
+impl From<TxConfidence> for ConfEvent {
+    fn from(TxConfidence { wallet_tx, num_confirmations }: TxConfidence) -> Self {
+        let mut raw_tx = Vec::new();
+        wallet_tx.tx.consensus_encode(&mut raw_tx).unwrap();
+        let (confidence_type, confirmation_block_time) = match wallet_tx.chain_position {
+            ChainPosition::Confirmed { anchor, .. } =>
+                (ConfidenceType::Confirmed, Some(walletrpc::ConfirmationBlockTime {
+                    block_hash: anchor.block_id.hash.as_byte_array().to_vec(),
+                    block_height: anchor.block_id.height,
+                    confirmation_time: anchor.confirmation_time,
+                })),
+            ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
+        };
+        ConfEvent {
+            raw_tx,
+            confidence_type: confidence_type.into(),
+            num_confirmations,
+            confirmation_block_time,
+        }
     }
 }
 
