@@ -3,6 +3,8 @@ use bdk_wallet::bitcoin::{Network, Transaction, Txid};
 use bdk_wallet::chain::{CheckPoint, ChainPosition, ConfirmationBlockTime};
 use bdk_bitcoind_rpc::Emitter;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{Auth, Client, RpcApi as _};
+use futures::stream::{self, BoxStream, StreamExt as _};
+use std::iter;
 use std::prelude::rust_2021::*;
 use std::sync::{Arc, RwLock};
 
@@ -17,7 +19,7 @@ pub trait WalletService {
     fn balance(&self) -> Balance;
     fn reveal_next_address(&self) -> AddressInfo;
     fn list_unspent(&self) -> Vec<LocalOutput>;
-    fn get_tx_confidence(&self, txid: Txid) -> Option<TxConfidence>;
+    fn get_tx_confidence_stream(&self, txid: Txid) -> Option<BoxStream<'static, TxConfidence>>;
 }
 
 pub struct WalletServiceImpl {
@@ -79,14 +81,14 @@ impl WalletService for WalletServiceImpl {
         self.wallet.read().unwrap().list_unspent().collect()
     }
 
-    fn get_tx_confidence(&self, txid: Txid) -> Option<TxConfidence> {
+    fn get_tx_confidence_stream(&self, txid: Txid) -> Option<BoxStream<'static, TxConfidence>> {
         let wallet = self.wallet.read().unwrap();
         let wallet_tx: WalletTx = wallet.get_tx(txid)?.into();
         let next_height = wallet.latest_checkpoint().height() + 1;
         drop(wallet);
         let conf_height = wallet_tx.chain_position.confirmation_height_upper_bound().unwrap_or(next_height);
         let num_confirmations = next_height - conf_height;
-        Some(TxConfidence { wallet_tx, num_confirmations })
+        Some(stream::iter(iter::once(TxConfidence { wallet_tx, num_confirmations })).boxed())
     }
 }
 

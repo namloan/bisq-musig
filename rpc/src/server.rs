@@ -8,7 +8,7 @@ use bdk_wallet::bitcoin::address::NetworkUnchecked;
 use bdk_wallet::bitcoin::consensus::Encodable as _;
 use bdk_wallet::bitcoin::hashes::Hash as _;
 use bdk_wallet::chain::ChainPosition;
-use futures::stream;
+use futures::stream::{self, BoxStream, StreamExt as _};
 use musig2::{LiftedSignature, PubNonce};
 use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
     NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage, PartialSignaturesRequest,
@@ -19,7 +19,6 @@ use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::marker::{Send, Sync};
-use std::pin::Pin;
 use std::prelude::rust_2021::*;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -128,7 +127,7 @@ impl musig_server::Musig for MusigImpl {
         })
     }
 
-    type PublishDepositTxStream = Pin<Box<dyn stream::Stream<Item=Result<TxConfirmationStatus>> + Send>>;
+    type PublishDepositTxStream = BoxStream<'static, Result<TxConfirmationStatus>>;
 
     async fn publish_deposit_tx(&self, request: Request<PublishDepositTxRequest>) -> Result<Response<Self::PublishDepositTxStream>> {
         handle_request(request, move |_request, _trade_model| {
@@ -140,8 +139,7 @@ impl musig_server::Musig for MusigImpl {
                 num_confirmations: 1,
             };
 
-            let stream: Self::PublishDepositTxStream = Box::pin(stream::iter(iter::once(Ok(confirmation_event))));
-            Ok(stream)
+            Ok(stream::iter(iter::once(Ok(confirmation_event))).boxed())
         })
     }
 
@@ -229,35 +227,36 @@ impl wallet_server::Wallet for WalletImpl {
         Ok(Response::new(ListUnspentResponse { utxos }))
     }
 
-    type RegisterConfidenceNtfnStream = Pin<Box<dyn stream::Stream<Item=Result<ConfEvent>> + Send>>;
+    type RegisterConfidenceNtfnStream = BoxStream<'static, Result<ConfEvent>>;
 
     async fn register_confidence_ntfn(&self, request: Request<ConfRequest>) -> Result<Response<Self::RegisterConfidenceNtfnStream>> {
         println!("Got a request: {:?}", request);
 
         let txid = request.into_inner().tx_id.my_try_into()?;
-        let TxConfidence { wallet_tx, num_confirmations } = self.wallet_service.get_tx_confidence(txid)
-            .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?;
+        let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
+            .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?
+            .map(|TxConfidence { wallet_tx, num_confirmations }| {
+                let mut raw_tx = Vec::new();
+                wallet_tx.tx.consensus_encode(&mut raw_tx).unwrap();
+                let (confidence_type, confirmation_block_time) = match wallet_tx.chain_position {
+                    ChainPosition::Confirmed { anchor, .. } =>
+                        (ConfidenceType::Confirmed, Some(walletrpc::ConfirmationBlockTime {
+                            block_hash: anchor.block_id.hash.as_byte_array().to_vec(),
+                            block_height: anchor.block_id.height,
+                            confirmation_time: anchor.confirmation_time,
+                        })),
+                    ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
+                };
+                Ok(ConfEvent {
+                    raw_tx,
+                    confidence_type: confidence_type.into(),
+                    num_confirmations,
+                    confirmation_block_time,
+                })
+            })
+            .boxed();
 
-        let mut raw_tx = Vec::new();
-        wallet_tx.tx.consensus_encode(&mut raw_tx).unwrap();
-        let (confidence_type, confirmation_block_time) = match wallet_tx.chain_position {
-            ChainPosition::Confirmed { anchor, .. } =>
-                (ConfidenceType::Confirmed, Some(walletrpc::ConfirmationBlockTime {
-                    block_hash: anchor.block_id.hash.as_byte_array().to_vec(),
-                    block_height: anchor.block_id.height,
-                    confirmation_time: anchor.confirmation_time,
-                })),
-            ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
-        };
-        let conf_event = ConfEvent {
-            raw_tx,
-            confidence_type: confidence_type.into(),
-            num_confirmations,
-            confirmation_block_time,
-        };
-
-        let stream: Self::RegisterConfidenceNtfnStream = Box::pin(stream::iter(iter::once(Ok(conf_event))));
-        Ok(Response::new(stream))
+        Ok(Response::new(conf_events))
     }
 }
 
