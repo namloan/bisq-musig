@@ -349,7 +349,7 @@ impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
 
 impl From<ExchangedNonces<'_, ByRef>> for NonceSharesMessage {
     fn from(value: ExchangedNonces<ByRef>) -> Self {
-        NonceSharesMessage {
+        Self {
             // Use default values for proto fields besides the nonce shares. TODO: A little hacky; consider refactoring proto.
             warning_tx_fee_bump_address: String::default(),
             redirect_tx_fee_bump_address: String::default(),
@@ -396,7 +396,7 @@ impl<'a> MyTryInto<ExchangedNonces<'a, ByVal>> for NonceSharesMessage {
 
 impl From<ExchangedSigs<'_, ByRef>> for PartialSignaturesMessage {
     fn from(value: ExchangedSigs<ByRef>) -> Self {
-        PartialSignaturesMessage {
+        Self {
             peers_warning_tx_buyer_input_partial_signature:
             value.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
             peers_warning_tx_seller_input_partial_signature:
@@ -426,7 +426,7 @@ impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
 
 impl From<Balance> for WalletBalanceResponse {
     fn from(value: Balance) -> Self {
-        WalletBalanceResponse {
+        Self {
             immature: value.immature.to_sat(),
             trusted_pending: value.trusted_pending.to_sat(),
             untrusted_pending: value.untrusted_pending.to_sat(),
@@ -437,7 +437,7 @@ impl From<Balance> for WalletBalanceResponse {
 
 impl From<LocalOutput> for TransactionOutput {
     fn from(value: LocalOutput) -> Self {
-        TransactionOutput {
+        Self {
             tx_id: value.outpoint.txid.as_byte_array().into(),
             vout: value.outpoint.vout,
             script_pub_key: value.txout.script_pubkey.into_bytes(),
@@ -459,7 +459,7 @@ impl From<TxConfidence> for ConfEvent {
                 })),
             ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
         };
-        ConfEvent {
+        Self {
             raw_tx,
             confidence_type: confidence_type.into(),
             num_confirmations,

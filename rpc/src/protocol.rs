@@ -344,16 +344,14 @@ impl TradeModel {
             self.buyers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
             self.buyers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
             self.buyers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(sigs.peers_redirect_tx_input_partial_signature);
-            self.swap_tx_input_sig_ctx.peers_partial_sig = sigs.swap_tx_input_partial_signature;
         } else {
             self.sellers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
             self.sellers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
             self.sellers_redirect_tx_input_sig_ctx.peers_partial_sig = Some(sigs.peers_redirect_tx_input_partial_signature);
-
-            // NOTE: The passed field here would normally be 'None'. The buyer should redact the field at the trade
-            // start and reveal it later, after payment is started, to prevent premature trade closure by the seller:
-            self.swap_tx_input_sig_ctx.peers_partial_sig = sigs.swap_tx_input_partial_signature;
         }
+        // NOTE: This passed field would normally be 'None' for the seller, as the buyer should redact the field
+        // at the trade start and reveal it later, after payment is started, to prevent premature trade closure:
+        self.swap_tx_input_sig_ctx.peers_partial_sig = sigs.swap_tx_input_partial_signature;
     }
 
     pub fn aggregate_partial_signatures(&mut self) -> Result<()> {

@@ -27,13 +27,13 @@ pub struct WalletServiceImpl {
 }
 
 impl WalletServiceImpl {
-    pub fn new() -> WalletServiceImpl {
+    pub fn new() -> Self {
         let wallet: Wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
             .network(Network::Regtest)
             .create_wallet_no_persist()
             .unwrap();
 
-        WalletServiceImpl { wallet: RwLock::new(wallet) }
+        Self { wallet: RwLock::new(wallet) }
     }
 }
 
@@ -104,6 +104,6 @@ pub struct WalletTx {
 
 impl From<bdk_wallet::WalletTx<'_>> for WalletTx {
     fn from(value: bdk_wallet::WalletTx) -> Self {
-        WalletTx { tx: value.tx_node.tx, chain_position: value.chain_position }
+        Self { tx: value.tx_node.tx, chain_position: value.chain_position }
     }
 }
