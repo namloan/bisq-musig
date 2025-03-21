@@ -9,6 +9,10 @@ mod tests {
 
     #[test]
     fn test_musig() -> anyhow::Result<()> {
+        initial_tx_creation()?;
+        Ok(())
+    }
+    pub fn initial_tx_creation() -> anyhow::Result<(BMPProtocol, BMPProtocol)> {
         println!("running...");
         nigiri::check_start();
         let mut alice_funds = nigiri::funded_wallet();
@@ -62,15 +66,30 @@ mod tests {
 
         // done -----------------------------
         crate::nigiri::tiktok();
+        Ok((alice, bob))
+    }
+
+    #[test]
+    fn test_swap() -> anyhow::Result<()> {
+        // create all transaction and Broadcast DepositTx already
+        let (alice, bob) = initial_tx_creation()?;
+        dbg!(&alice.swap_tx.tx);
+        dbg!(&bob.swap_tx.tx);
+
+        // alice broadcats SwapTx
+        dbg!(alice.swap_tx.broadcast(alice.ctx));
+        nigiri::tiktok();
         Ok(())
     }
 
     #[test]
     fn test_warning() -> anyhow::Result<()> {
         // create all transaction and Broadcast DepositTx already
-        // let (alice, bob) = test_musig()?;
+        let (alice, bob) = initial_tx_creation()?;
+        dbg!(&alice.warning_tx_me.tx);
         // alice broadcats WarningTx
-        // alice.warning_tx_me.broadcast(alice.ctx);
+        dbg!(alice.warning_tx_me.broadcast(alice.ctx));
+        nigiri::tiktok();
         Ok(())
     }
 }
