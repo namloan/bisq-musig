@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn test_warning() -> anyhow::Result<()> {
         // create all transaction and Broadcast DepositTx already
-        let (alice, bob) = initial_tx_creation()?;
+        let (alice, _bob) = initial_tx_creation()?;
         dbg!(&alice.warning_tx_me.tx);
         // alice broadcats WarningTx
         dbg!(alice.warning_tx_me.broadcast(alice.ctx));

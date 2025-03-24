@@ -48,7 +48,7 @@ const ELECTRUM_URL: &str =
 impl MemWallet {
     pub(crate) fn new() -> anyhow::Result<MemWallet> {
         let mut seed: [u8; 32] = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
 
         let network: Network = Network::Regtest;
         let xprv: Xpriv = Xpriv::new_master(network, &seed)?;
@@ -578,7 +578,7 @@ impl SwapTx {
     }
 }
 
-struct DepositTx {
+pub struct DepositTx {
     pub part_psbt: Option<Psbt>,
     pub signed_psbt: Option<Psbt>,
     pub tx: Option<Transaction>,
@@ -734,7 +734,7 @@ impl AggKey {
     pub fn new() -> anyhow::Result<AggKey> {
         //TODO is this random sufficient?
         let mut seed = [0u8; 32];
-        rand::thread_rng().fill(&mut seed);
+        rand::rng().fill(&mut seed);
 
         let sec: Scalar = Scalar::from_slice(&seed)?;
         let point = sec.base_point_mul();
@@ -801,9 +801,9 @@ impl TMuSig2 {
         // there must be the aggregated key at this point
         assert!(agg_key.agg_point.is_some());
         let mut seed = [0u8; 32];
-        rand::thread_rng().fill(&mut seed);
+        rand::rng().fill(&mut seed);
         let mut seed2 = [0u8; 32];
-        rand::thread_rng().fill(&mut seed2);
+        rand::rng().fill(&mut seed2);
         let sec_nonce = SecNonceBuilder::new(seed)
             .with_aggregated_pubkey(agg_key.agg_point.unwrap())
             .with_extra_input(&seed2) //TODO does this help? Or do we need more random?
@@ -1175,7 +1175,6 @@ fn test_q_tik() -> anyhow::Result<()> {
     let d: Point = agg_ctx.clone()
         .with_unspendable_taproot_tweak()?
         .aggregated_pubkey();
-    let dser = d.serialize();
     // How to do the signature with Point d and secure key?
 
     // AggKey ----------------------------------------------
