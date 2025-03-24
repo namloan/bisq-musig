@@ -96,7 +96,32 @@ mod tests {
         let (alice, _bob) = initial_tx_creation()?;
         dbg!(&alice.warning_tx_me.tx);
         // alice broadcats WarningTx
-        dbg!(alice.warning_tx_me.broadcast(alice.ctx));
+        dbg!(alice.warning_tx_me.broadcast(&alice.ctx));
+        nigiri::tiktok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_claim() -> anyhow::Result<()> {
+        // create all transaction and Broadcast DepositTx already
+        let (alice, _bob) = initial_tx_creation()?;
+        // dbg!(&alice.warning_tx_me.tx);
+        // alice broadcats WarningTx
+        alice.warning_tx_me.broadcast(&alice.ctx);
+        nigiri::tiktok();
+        dbg!(&alice.claim_tx_me.tx);
+
+        // according to BIP-68 min time to wait is 512sec
+        // let mut remaining_time = 532;
+        // while remaining_time > 0 {
+        //     println!("Remaining time: {} seconds", remaining_time);
+        //     thread::sleep(Duration::from_secs(10));
+        //     remaining_time -= 10;
+        // }
+        // thread::sleep(Duration::from_secs(512)); //otherwise non-BIP68-final error
+
+        let tx = alice.claim_tx_me.broadcast(alice.ctx);
+        dbg!(tx);
         nigiri::tiktok();
         Ok(())
     }
