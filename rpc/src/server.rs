@@ -1,3 +1,4 @@
+mod observable;
 mod protocol;
 mod storage;
 mod wallet;
@@ -225,8 +226,9 @@ impl wallet_server::Wallet for WalletImpl {
 
         let txid = request.into_inner().tx_id.my_try_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
-            .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?
-            .map(|o| Ok(o.into()))
+            .map(move |o| Ok(o
+                .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?
+                .into()))
             .boxed();
 
         Ok(Response::new(conf_events))

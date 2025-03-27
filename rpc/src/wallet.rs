@@ -3,10 +3,11 @@ use bdk_wallet::bitcoin::{Network, Transaction, Txid};
 use bdk_wallet::chain::{CheckPoint, ChainPosition, ConfirmationBlockTime};
 use bdk_bitcoind_rpc::Emitter;
 use bdk_bitcoind_rpc::bitcoincore_rpc::{Auth, Client, RpcApi as _};
-use futures::stream::{self, BoxStream, StreamExt as _};
-use std::iter;
+use futures::stream::{BoxStream, StreamExt as _};
 use std::prelude::rust_2021::*;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+
+use crate::observable::ObservableHashMap;
 
 const COOKIE_FILE_PATH: &str = ".localnet/bitcoind/regtest/.cookie";
 const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAj\
@@ -19,22 +20,44 @@ pub trait WalletService {
     fn balance(&self) -> Balance;
     fn reveal_next_address(&self) -> AddressInfo;
     fn list_unspent(&self) -> Vec<LocalOutput>;
-    fn get_tx_confidence_stream(&self, txid: Txid) -> Option<BoxStream<'static, TxConfidence>>;
+    fn get_tx_confidence_stream(&self, txid: Txid) -> BoxStream<'static, Option<TxConfidence>>;
 }
 
 pub struct WalletServiceImpl {
+    // NOTE: To avoid deadlocks, must be careful to acquire these locks in consistent order. At
+    //  present, the lock on 'wallet' is acquired first, then the lock on 'tx_confidence_map'.
     wallet: RwLock<Wallet>,
+    tx_confidence_map: Mutex<ObservableHashMap<Txid, TxConfidence>>,
 }
 
 impl WalletServiceImpl {
     pub fn new() -> Self {
-        let wallet: Wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
+        let wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
             .network(Network::Regtest)
             .create_wallet_no_persist()
             .unwrap();
 
-        Self { wallet: RwLock::new(wallet) }
+        let mut tx_confidence_map = ObservableHashMap::new();
+        tx_confidence_map.sync(tx_confidence_entries(&wallet));
+
+        Self { wallet: RwLock::new(wallet), tx_confidence_map: Mutex::new(tx_confidence_map) }
     }
+
+    fn sync_tx_confidence_map(&self) {
+        let wallet = self.wallet.read().unwrap();
+        self.tx_confidence_map.lock().unwrap().sync(tx_confidence_entries(&wallet));
+    }
+}
+
+fn tx_confidence_entries(wallet: &Wallet) -> impl Iterator<Item=(Txid, TxConfidence)> + '_ {
+    let next_height = wallet.latest_checkpoint().height() + 1;
+    wallet.transactions()
+        .map(move |wallet_tx| {
+            let wallet_tx: WalletTx = wallet_tx.into();
+            let conf_height = wallet_tx.chain_position.confirmation_height_upper_bound().unwrap_or(next_height);
+            let num_confirmations = next_height - conf_height;
+            (wallet_tx.txid, TxConfidence { wallet_tx, num_confirmations })
+        })
 }
 
 impl WalletService for WalletServiceImpl {
@@ -66,6 +89,9 @@ impl WalletService for WalletServiceImpl {
         let mempool_emissions = emitter.mempool().unwrap();
         self.wallet.write().unwrap().apply_unconfirmed_txs(mempool_emissions);
 
+        println!("Syncing tx confidence map with wallet.");
+        self.sync_tx_confidence_map();
+
         println!("Wallet balance after syncing: {}", self.balance().total());
     }
 
@@ -81,29 +107,26 @@ impl WalletService for WalletServiceImpl {
         self.wallet.read().unwrap().list_unspent().collect()
     }
 
-    fn get_tx_confidence_stream(&self, txid: Txid) -> Option<BoxStream<'static, TxConfidence>> {
-        let wallet = self.wallet.read().unwrap();
-        let wallet_tx: WalletTx = wallet.get_tx(txid)?.into();
-        let next_height = wallet.latest_checkpoint().height() + 1;
-        drop(wallet);
-        let conf_height = wallet_tx.chain_position.confirmation_height_upper_bound().unwrap_or(next_height);
-        let num_confirmations = next_height - conf_height;
-        Some(stream::iter(iter::once(TxConfidence { wallet_tx, num_confirmations })).boxed())
+    fn get_tx_confidence_stream(&self, txid: Txid) -> BoxStream<'static, Option<TxConfidence>> {
+        self.tx_confidence_map.lock().unwrap().observe(txid).boxed()
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
 pub struct TxConfidence {
     pub wallet_tx: WalletTx,
     pub num_confirmations: u32,
 }
 
+#[derive(Clone, Eq, PartialEq)]
 pub struct WalletTx {
+    pub txid: Txid,
     pub tx: Arc<Transaction>,
     pub chain_position: ChainPosition<ConfirmationBlockTime>,
 }
 
 impl From<bdk_wallet::WalletTx<'_>> for WalletTx {
     fn from(value: bdk_wallet::WalletTx) -> Self {
-        Self { tx: value.tx_node.tx, chain_position: value.chain_position }
+        Self { txid: value.tx_node.txid, tx: value.tx_node.tx, chain_position: value.chain_position }
     }
 }
