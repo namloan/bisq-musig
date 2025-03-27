@@ -18,11 +18,28 @@ use musig2::{AdaptorSignature, AggNonce, KeyAggContext, LiftedSignature, Partial
 use rand::{Rng, RngCore};
 use std::io::Write;
 use std::ops::{Add, Sub};
+use std::str::FromStr;
 
 pub struct MemWallet {
     pub wallet: Wallet,
     pub client: BdkElectrumClient<electrum_client::Client>,
 }
+
+impl MemWallet {
+    pub(crate) fn transaction_broadcast(&self, tx: &Transaction) -> anyhow::Result<Txid> {
+        let result = self.client.transaction_broadcast(tx);
+
+        if let Err(e) = result {
+            if e.to_string().contains("Transaction already in block chain") {
+                return Ok(tx.compute_txid());
+            }
+            return Err(e.into());
+        }
+
+        Ok(result?)
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum ProtocolRole {
     Seller,
@@ -132,6 +149,7 @@ pub struct Round1Parameter {
     pub(crate) swap_script: Option<ScriptBuf>, // only set from Seller
     pub warn_anchor_spend: ScriptBuf,
     pub claim_spend: ScriptBuf,
+    pub redirect_anchor_spend: ScriptBuf,
 }
 pub(crate) struct Round2Parameter {
     // DepositTx --------
@@ -147,6 +165,8 @@ pub(crate) struct Round2Parameter {
     warn_bob_p_nonce: PubNonce,
     claim_alice_nonce: PubNonce,
     claim_bob_nonce: PubNonce,
+    redirect_alice_nonce: PubNonce,
+    redirect_bob_nonce: PubNonce,
 }
 pub(crate) struct Round3Parameter {
     // DepositTx --------
@@ -158,6 +178,7 @@ pub(crate) struct Round3Parameter {
     p_part_peer: PartialSignature,
     q_part_peer: PartialSignature,
     claim_part_sig: PartialSignature,
+    redirect_part_sig: PartialSignature,
 }
 pub(crate) struct Round4Parameter {
     pub(crate) swap_onchain: Option<Transaction>,
@@ -183,6 +204,8 @@ pub struct BMPProtocol {
     pub(crate) warning_tx_peer: WarningTx,
     pub(crate) claim_tx_me: ClaimTx,
     pub claim_tx_peer: ClaimTx,
+    pub redirect_tx_me: RedirectTx,
+    pub redirect_tx_peer: RedirectTx,
 }
 
 impl BMPContext {
@@ -209,6 +232,8 @@ impl BMPProtocol {
             warning_tx_peer: WarningTx::new(role.other()),
             claim_tx_me: ClaimTx::new(),
             claim_tx_peer: ClaimTx::new(),
+            redirect_tx_me: RedirectTx::new(),
+            redirect_tx_peer: RedirectTx::new(),
         })
     }
 
@@ -224,6 +249,10 @@ impl BMPProtocol {
         let claim_spend = self.ctx.funds.wallet.next_unused_address(KeychainKind::External).script_pubkey();
         self.claim_tx_me.claim_spend = Some(claim_spend.clone());
 
+        // RedirectTx
+        let redirect_anchor_spend = self.ctx.funds.wallet.next_unused_address(KeychainKind::External).script_pubkey();
+        self.redirect_tx_me.anchor_spend = Some(redirect_anchor_spend.clone());
+
         Ok(Round1Parameter {
             p_a: self.p_tik.pub_point,
             q_a: self.q_tik.pub_point,
@@ -231,6 +260,7 @@ impl BMPProtocol {
             swap_script,
             warn_anchor_spend,
             claim_spend,
+            redirect_anchor_spend,
         })
     }
 
@@ -271,6 +301,13 @@ impl BMPProtocol {
         self.claim_tx_peer.build(&mut self.ctx, other_tik, &self.warning_tx_peer)?;
         let claim_bob_nonce = self.claim_tx_peer.sig.as_ref().unwrap().pub_nonce.clone();
 
+        // RedirectTX
+        self.redirect_tx_me.build(&mut self.ctx, other_tik, &self.warning_tx_peer)?; // redirect TX is overcross alice reference Bob warningTx
+        let redirect_alice_nonce = self.redirect_tx_me.sig.as_ref().unwrap().pub_nonce.clone();
+        self.redirect_tx_peer.anchor_spend = Some(bob.redirect_anchor_spend);
+        self.redirect_tx_peer.build(&mut self.ctx, tik, &self.warning_tx_me)?;
+        let redirect_bob_nonce = self.redirect_tx_peer.sig.as_ref().unwrap().pub_nonce.clone();
+
         Ok(Round2Parameter {
             p_agg: self.p_tik.agg_point.unwrap(),
             q_agg: self.q_tik.agg_point.unwrap(),
@@ -282,6 +319,8 @@ impl BMPProtocol {
             warn_bob_q_nonce,
             claim_alice_nonce,
             claim_bob_nonce,
+            redirect_alice_nonce,
+            redirect_bob_nonce,
         })
     }
     pub(crate) fn round3(&mut self, bob: Round2Parameter) -> anyhow::Result<Round3Parameter> {
@@ -306,6 +345,10 @@ impl BMPProtocol {
         self.claim_tx_me.build_partial_sig(&self.ctx, &bob.claim_bob_nonce, &self.warning_tx_me)?; // no nneed to send my partial sig to peer
         let claim_part_sig = self.claim_tx_peer.build_partial_sig(&self.ctx, &bob.claim_alice_nonce, &self.warning_tx_peer)?; // sign bobs transaction that I constructed
 
+        //RedirectTx
+        self.redirect_tx_me.build_partial_sig(&self.ctx, &bob.redirect_bob_nonce, &self.warning_tx_peer)?;
+        let redirect_part_sig = self.redirect_tx_peer.build_partial_sig(&self.ctx, &bob.redirect_alice_nonce, &self.warning_tx_me)?; // sign bobs transaction that I constructed
+
 
         Ok(Round3Parameter {
             deposit_txid: txid, // only for verification that we actually are on the same page
@@ -313,6 +356,7 @@ impl BMPProtocol {
             p_part_peer, // partial signature for WarningTx Bob, input of p_tik
             q_part_peer,
             claim_part_sig,
+            redirect_part_sig,
         })
     }
     pub(crate) fn round4(&mut self, bob: Round3Parameter) -> anyhow::Result<Round4Parameter> {
@@ -320,6 +364,7 @@ impl BMPProtocol {
         self.swap_tx.aggregate_sigs(bob.swap_part_sig)?;
         self.warning_tx_me.aggregate_sigs(bob.p_part_peer, bob.q_part_peer)?;
         self.claim_tx_me.aggregate_sigs(bob.claim_part_sig)?;
+        self.redirect_tx_me.aggregate_sigs(bob.redirect_part_sig)?;
 
         if self.ctx.role == ProtocolRole::Seller {
             // only the seller can sign and use SwapTx
@@ -359,6 +404,107 @@ impl BMPProtocol {
     }
 }
 /**
+RedirectTx -- this redirects the funds from the WarningTx to the DAO.
+This is expected if the traders have some sor of conflict, which they cannot resolve themselves.
+One trader sends the WarningTx, the other trader answers by sending the RedirectTx.
+If a redirectTx is not send within t_2, then the trader which sent the WarningTx can
+send the ClaimTx and gets the hole funds for himself.
+Since RedirectTx sends the funds to the DAO, it needs an anchors for the trader, so he
+can raise the fees with CPFP to get it mined before ClaimTx can be broadcast.
+
+RedirectTx Bob spends from WarningTx Alice, that's important.
+Sending fnds to the DAO is done by having a list of addresses (from contributors) and percentages. (must add up to 100%)
+*/
+pub struct RedirectTx {
+    pub sig: Option<TMuSig2>,
+    pub tx: Option<Transaction>,
+    pub anchor_spend: Option<ScriptBuf>,
+}
+
+impl RedirectTx {
+    pub fn new() -> RedirectTx {
+        RedirectTx {
+            sig: None,
+            tx: None,
+            anchor_spend: None,
+        }
+    }
+    fn build(&mut self, _ctx: &mut BMPContext, tik: &AggKey, warn_tx: &WarningTx) -> anyhow::Result<Transaction> {
+        self.sig = Some(TMuSig2::new(tik.clone()));
+
+        let warn_funds = &warn_tx.funds_as_output();
+        let amount = warn_funds.value.sub(Amount::from_sat(1000)); //TODO calc fee rate.sub(); subtract ANCHOR_AMOUNT
+
+        let dao_bm = Self::get_dao_bm();
+        let mut outputs: Vec<TxOut> = dao_bm
+            .iter()
+            .map(|(address, ratio)| TxOut {
+                value: Amount::from_sat((amount.to_sat() as f32 * *ratio) as u64), // Calculate proportional value
+                script_pubkey: address.script_pubkey(),         // Convert DAO address to script_pubkey
+            })
+            .collect();
+
+        let anchor_output = TxOut {
+            value: ANCHOR_AMOUNT,
+            script_pubkey: self.anchor_spend.clone().unwrap(),
+        };
+        outputs.push(anchor_output);
+        let t1 = Sequence::from_height(1); // TODO define as const and find a good value
+        // let t2 = Sequence::from_seconds_ceil(1)?; // TODO define as const and find a good value
+        let input0 = TxIn {
+            previous_output: warn_tx.funds_as_outpoint(),
+            script_sig: ScriptBuf::default(),
+            sequence: t1,
+            witness: Witness::default(), // will be changed when signing.
+        };
+        let tx = Transaction {
+            version: Version::TWO,
+            input: vec![input0],
+            output: outputs,
+            lock_time: LockTime::ZERO,
+        };
+        self.tx = Some(tx.clone());
+
+        Ok(tx)
+    }
+    fn build_partial_sig(&mut self, _ctx: &BMPContext, peer_nonce: &PubNonce, warning_tx: &WarningTx) -> anyhow::Result<PartialSignature> {
+        let tx = self.tx.as_ref().unwrap();
+        let prevouts_warn_tx = warning_tx.get_tx().calc_prevouts(&tx.input)?;
+        // let p_index = tx.output_index(p_)
+        let musig = self.sig.as_mut().unwrap();
+        let index = 0; //TODO calculate this, if input0 from warningtx
+        let part_sig = musig.generate_partial_sig(index, peer_nonce, &prevouts_warn_tx, tx)?;
+        Ok(part_sig)
+    }
+
+    pub fn aggregate_sigs(&mut self, part_sig: PartialSignature) -> anyhow::Result<()> {
+        let sig = self.sig.as_mut().unwrap();
+        sig.aggregate_sigs(part_sig)?;
+
+        // now stuff those signatures into the transaction
+        let mut tx = self.tx.clone().unwrap();
+        // dbg!("before signing tx: {:?}",&tx);
+        tx = sig.sign(MaybeScalar::Zero, tx)?;
+        self.tx = Some(tx);
+        // dbg!("signed tx {:?}",&self.tx);
+        Ok(())
+    }
+    pub(crate) fn broadcast(&self, me: BMPContext) -> Txid {
+        me.funds.client.transaction_broadcast(self.tx.as_ref().unwrap()).unwrap()
+    }
+
+    /**
+    sum of all f32 must be 1
+    */
+    fn get_dao_bm() -> Vec<(Address, f32)> {
+        // TODO this needs a real implementation, and check that sum of ratios is 1
+        vec![
+            (Address::from_str("bcrt1p88h9s6lq8jw3ehdlljp7sa85kwpp9lvyrl077twvjnackk4lxt0sffnlrk").unwrap().assume_checked(), 0.6),
+            (Address::from_str("bcrt1phhl8d90r9haqwtvw2cv4ryjl8tlnqrv48nhpy7yyks5du6mr66xq5nlwhz").unwrap().assume_checked(), 0.4),
+        ]
+    }
+}
+/**
 ClaimTx -- One version for Alice and one for Bob.
 If the other side will not react on the WarningTx (by sending the RedirectTx)
 then Alice can claim the total amounts for herself.
@@ -379,18 +525,18 @@ impl ClaimTx {
     fn build(&mut self, _ctx: &mut BMPContext, tik: &AggKey, warn_tx: &WarningTx) -> anyhow::Result<Transaction> {
         self.sig = Some(TMuSig2::new(tik.clone()));
 
-        let warn = warn_tx.tx.as_ref().unwrap();
-        let w: &Vec<TxOut> = warn.output.as_ref();
-        let amount = w[0].value.sub(Amount::from_sat(1000)); //TODO calc fee rate.sub();
+        let warn_funds = &warn_tx.funds_as_output();
+        let amount = warn_funds.value.sub(Amount::from_sat(1000)); //TODO calc fee rate.sub();
+        // let amount = w[0].value.sub(Amount::from_sat(1000)); //TODO calc fee rate.sub();
 
         let output0 = TxOut {
             value: amount,
-            script_pubkey: tik.agg_point.unwrap().key_spend_no_merkle_address()?.script_pubkey(),
+            script_pubkey: self.claim_spend.clone().unwrap(),
         };
-        let t2 = Sequence::from_height(1); // TODO define as const and find a good value
-        // let t2 = Sequence::from_seconds_ceil(1)?; // TODO define as const and find a good value
+        let t2 = Sequence::from_height(2); // TODO define as const and find a good value
+        // let t2 = Sequence::from_seconds_ceil(1)?;
         let input0 = TxIn {
-            previous_output: OutPoint::new(warn.compute_txid(), 0),
+            previous_output: warn_tx.funds_as_outpoint(),
             script_sig: ScriptBuf::default(),
             sequence: t2,
             witness: Witness::default(), // will be changed when signing.
@@ -429,10 +575,11 @@ impl ClaimTx {
         Ok(())
     }
 
-    pub(crate) fn broadcast(&self, me: BMPContext) -> Txid {
-        me.funds.client.transaction_broadcast(self.tx.as_ref().unwrap()).unwrap()
+    pub(crate) fn broadcast(&self, me: BMPContext) -> anyhow::Result<Txid> {
+        Ok(me.funds.client.transaction_broadcast(self.tx.as_ref().unwrap())?)
     }
 }
+
 /**
 * WarningTx -- there is one version for Alice and one for Bob.
 That means each party generates both transaction and sign them.
@@ -449,6 +596,13 @@ pub struct WarningTx {
 const ANCHOR_AMOUNT: Amount = Amount::from_sat(330); // 330 is std amount for anchors
 
 impl WarningTx {
+    pub fn get_tx(&self) -> &Transaction { self.tx.as_ref().unwrap() }
+    pub fn funds_as_outpoint(&self) -> OutPoint { OutPoint::new(self.tx.as_ref().unwrap().compute_txid(), 0) }
+    pub fn funds_as_output(&self) -> TxOut {
+        let w = self.tx.as_ref().unwrap();
+        let wout: &Vec<TxOut> = w.output.as_ref();
+        wout[0].clone()
+    }
     pub fn new(role: ProtocolRole) -> WarningTx {
         WarningTx {
             role,
@@ -782,7 +936,7 @@ impl DepositTx {
         self.tx = Some(tx.clone());
         self.signed_psbt = None; // remove used data
         // TODO alice and bob will broadcast, is that a bug or a feature?
-        let depo_txid = ctx.funds.client.transaction_broadcast(&tx)?;
+        let depo_txid = ctx.funds.transaction_broadcast(&tx)?;
         dbg!("DepositTx txid: {:?}", &depo_txid);
         Ok(depo_txid)
     }

@@ -109,6 +109,7 @@ mod tests {
         // alice broadcats WarningTx
         alice.warning_tx_me.broadcast(&alice.ctx);
         nigiri::tiktok();
+        nigiri::tiktok(); // we have set time-delay t2 to 2 Blocks
         dbg!(&alice.claim_tx_me.tx);
 
         // according to BIP-68 min time to wait is 512sec
@@ -120,7 +121,47 @@ mod tests {
         // }
         // thread::sleep(Duration::from_secs(512)); //otherwise non-BIP68-final error
 
-        let tx = alice.claim_tx_me.broadcast(alice.ctx);
+        let tx = alice.claim_tx_me.broadcast(alice.ctx)?;
+        dbg!(tx);
+        nigiri::tiktok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_claim_too_early() -> anyhow::Result<()> {
+        // create all transaction and Broadcast DepositTx already
+        let (alice, _bob) = initial_tx_creation()?;
+        alice.warning_tx_me.broadcast(&alice.ctx);
+        // nigiri::tiktok();
+        nigiri::tiktok(); // we have set time-delay t2 to 2 Blocks
+
+        let rtx = alice.claim_tx_me.broadcast(alice.ctx);
+        match rtx {
+            Ok(_) => panic!("ClaimTx should not go through, because its been broadcast too early.
+            HINT: Do not run this test in parallel with other tests, use --test-threads=1"),
+            Err(e) => {
+                let error_message = format!("{:?}", e);
+                // println!("{}", error_message);
+                if !error_message.contains("non-BIP68-final") {
+                    panic!("Wrong Errormessage: {}", error_message);
+                }
+            }
+        }
+        nigiri::tiktok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_redirect() -> anyhow::Result<()> {
+        // create all transaction and Broadcast DepositTx already
+        let (alice, bob) = initial_tx_creation()?;
+        // dbg!(&alice.warning_tx_me.tx);
+        // alice broadcats WarningTx
+        let bob_warn_id = bob.warning_tx_me.broadcast(&bob.ctx);
+        nigiri::tiktok();
+        dbg!(bob_warn_id);
+
+        let tx = alice.redirect_tx_me.broadcast(alice.ctx);
         dbg!(tx);
         nigiri::tiktok();
         Ok(())
