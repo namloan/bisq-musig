@@ -16,6 +16,7 @@ path = "src/client.rs"
 bdk_bitcoind_rpc = "0.18.0"
 bdk_wallet = "1.1.0"
 clap = { version = "4.5.31", features = ["derive"] }
+drop-stream = "0.3.2"
 futures = "0.3.31"
 musig2 = { version = "0.2.3", features = ["rand"] }
 prost = "0.13.4"
