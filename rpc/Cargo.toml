@@ -45,5 +45,3 @@ str_to_string = "warn"
 try_err = "warn"
 unused_trait_names = "warn"
 use_self = "warn"
-# Format arg handling in IDEA Rust plugin is broken:
-uninlined_format_args = { level = "allow", priority = 1 }

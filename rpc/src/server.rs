@@ -21,7 +21,6 @@ use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::marker::{Send, Sync};
-use std::prelude::rust_2021::*;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
@@ -227,7 +226,7 @@ impl wallet_server::Wallet for WalletImpl {
         let txid = request.into_inner().tx_id.my_try_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
             .map(move |o| Ok(o
-                .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?
+                .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {txid}")))?
                 .into()))
             .boxed();
 
@@ -257,7 +256,7 @@ impl_musig_req!(CloseTradeRequest);
 fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Response<Res>>
     where Req: MusigRequest,
           F: FnOnce(Req, &mut TradeModel) -> Result<Res> {
-    println!("Got a request: {:?}", request);
+    println!("Got a request: {request:?}");
 
     let request = request.into_inner();
     let trade_model = TRADE_MODELS.get_trade_model(request.trade_id())
@@ -315,7 +314,7 @@ impl MyTryInto<Txid> for &[u8] {
 impl MyTryInto<Role> for i32 {
     fn my_try_into(self) -> Result<Role> {
         TryInto::<musigrpc::Role>::try_into(self)
-            .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
+            .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {i}")))
             .map(Into::into)
     }
 }
@@ -323,7 +322,7 @@ impl MyTryInto<Role> for i32 {
 impl MyTryInto<Address<NetworkUnchecked>> for &str {
     fn my_try_into(self) -> Result<Address<NetworkUnchecked>> {
         self.parse::<Address<_>>()
-            .map_err(|e| Status::invalid_argument(format!("could not parse address: {}", e)))
+            .map_err(|e| Status::invalid_argument(format!("could not parse address: {e}")))
     }
 }
 

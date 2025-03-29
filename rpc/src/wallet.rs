@@ -1,18 +1,19 @@
+use bdk_bitcoind_rpc::Emitter;
+use bdk_bitcoind_rpc::bitcoincore_rpc::{Auth, Client, RpcApi as _};
 use bdk_wallet::{AddressInfo, Balance, KeychainKind, LocalOutput, Wallet};
 use bdk_wallet::bitcoin::{Network, Transaction, Txid};
 use bdk_wallet::chain::{CheckPoint, ChainPosition, ConfirmationBlockTime};
-use bdk_bitcoind_rpc::Emitter;
-use bdk_bitcoind_rpc::bitcoincore_rpc::{Auth, Client, RpcApi as _};
 use drop_stream::DropStream;
 use futures::stream::{BoxStream, StreamExt as _};
-use std::prelude::rust_2021::*;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::observable::ObservableHashMap;
 
 const COOKIE_FILE_PATH: &str = ".localnet/bitcoind/regtest/.cookie";
+//noinspection SpellCheckingInspection
 const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAj\
     WytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
+//noinspection SpellCheckingInspection
 const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAj\
     WytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
 
@@ -110,7 +111,7 @@ impl WalletService for WalletServiceImpl {
 
     fn get_tx_confidence_stream(&self, txid: Txid) -> BoxStream<'static, Option<TxConfidence>> {
         DropStream::new(self.tx_confidence_map.lock().unwrap().observe(txid), move || {
-            println!("Confidence stream has been dropped for txid: {}", txid);
+            println!("Confidence stream has been dropped for txid: {txid}");
         }).boxed()
     }
 }

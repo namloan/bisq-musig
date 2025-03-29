@@ -2,7 +2,6 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
-use std::prelude::rust_2021::*;
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::UnboundedReceiverStream;

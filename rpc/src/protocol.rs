@@ -5,7 +5,6 @@ use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignatu
 use musig2::adaptor::AdaptorSignature;
 use secp::{MaybePoint, MaybeScalar, Point, Scalar};
 use std::collections::BTreeMap;
-use std::prelude::rust_2021::*;
 use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
@@ -180,6 +179,7 @@ impl TradeModel {
         Ok(())
     }
 
+    //noinspection SpellCheckingInspection
     pub fn init_my_fee_bump_addresses(&mut self) -> Result<()> {
         // TODO: Replace dummy addresses with real ones provided by a service, say by passing in a
         //  suitable service or context object. (Need to make the network configurable as well.)
