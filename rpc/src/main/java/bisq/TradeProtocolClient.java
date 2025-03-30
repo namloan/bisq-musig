@@ -17,11 +17,13 @@ public class TradeProtocolClient {
                 InsecureChannelCredentials.create()
         ).build();
 
-        var musigStub = MusigGrpc.newBlockingStub(channel);
-        testMusigService_twoParties(musigStub, 0, ClosureType.COOPERATIVE);
-        testMusigService_twoParties(musigStub, 1, ClosureType.UNCOOPERATIVE);
-
-        channel.shutdown();
+        try {
+            var musigStub = MusigGrpc.newBlockingStub(channel);
+            testMusigService_twoParties(musigStub, 0, ClosureType.COOPERATIVE);
+            testMusigService_twoParties(musigStub, 1, ClosureType.UNCOOPERATIVE);
+        } finally {
+            channel.shutdown();
+        }
     }
 
     /**
