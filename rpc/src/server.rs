@@ -225,9 +225,7 @@ impl wallet_server::Wallet for WalletImpl {
 
         let txid = request.into_inner().tx_id.my_try_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
-            .map(move |o| Ok(o
-                .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {txid}")))?
-                .into()))
+            .map(|o| Ok(o.map(Into::into).unwrap_or_default()))
             .boxed();
 
         Ok(Response::new(conf_events))
@@ -461,7 +459,7 @@ impl From<TxConfidence> for ConfEvent {
             ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
         };
         Self {
-            raw_tx,
+            raw_tx: Some(raw_tx),
             confidence_type: confidence_type.into(),
             num_confirmations,
             confirmation_block_time,
@@ -484,4 +482,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::walletrpc::{ConfEvent, ConfidenceType};
+
+    #[test]
+    fn conf_event_default() {
+        let missing_tx_conf_event = ConfEvent {
+            raw_tx: None,
+            confidence_type: ConfidenceType::Missing.into(),
+            num_confirmations: 0,
+            confirmation_block_time: None,
+        };
+        assert_eq!(ConfEvent::default(), missing_tx_conf_event);
+    }
 }
