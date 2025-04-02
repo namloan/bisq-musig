@@ -22,6 +22,7 @@ use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::marker::{Send, Sync};
 use std::sync::Arc;
+use tokio::task;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
@@ -473,7 +474,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let musig = MusigImpl::default();
     let wallet = WalletImpl { wallet_service: Arc::new(WalletServiceImpl::new()) };
     let wallet_service = wallet.wallet_service.clone();
-    tokio::task::spawn_blocking(move || { wallet_service.connect() });
+    task::spawn(async move {
+        let Err(e) = wallet_service.connect().await;
+        eprintln!("Wallet connection error: {e}");
+    });
 
     Server::builder()
         .add_service(MusigServer::new(musig))

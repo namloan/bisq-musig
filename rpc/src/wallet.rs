@@ -4,8 +4,11 @@ use bdk_wallet::{AddressInfo, Balance, KeychainKind, LocalOutput, Wallet};
 use bdk_wallet::bitcoin::{Network, Transaction, Txid};
 use bdk_wallet::chain::{CheckPoint, ChainPosition, ConfirmationBlockTime};
 use drop_stream::DropStream;
+use futures::never::Never;
 use futures::stream::{BoxStream, StreamExt as _};
 use std::sync::{Arc, Mutex, RwLock};
+use thiserror::Error;
+use tokio::task;
 
 use crate::observable::ObservableHashMap;
 
@@ -17,8 +20,9 @@ const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsR
 const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAj\
     WytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
 
+#[tonic::async_trait]
 pub trait WalletService {
-    fn connect(&self);
+    async fn connect(&self) -> Result<Never>;
     fn balance(&self) -> Balance;
     fn reveal_next_address(&self) -> AddressInfo;
     fn list_unspent(&self) -> Vec<LocalOutput>;
@@ -28,6 +32,7 @@ pub trait WalletService {
 pub struct WalletServiceImpl {
     // NOTE: To avoid deadlocks, must be careful to acquire these locks in consistent order. At
     //  present, the lock on 'wallet' is acquired first, then the lock on 'tx_confidence_map'.
+    // TODO: Consider using async locks here, as wallet operations have nontrivial cost:
     wallet: RwLock<Wallet>,
     tx_confidence_map: Mutex<ObservableHashMap<Txid, TxConfidence>>,
 }
@@ -62,15 +67,15 @@ fn tx_confidence_entries(wallet: &Wallet) -> impl Iterator<Item=(Txid, TxConfide
         })
 }
 
+#[tonic::async_trait]
 impl WalletService for WalletServiceImpl {
-    // FIXME: This currently panics in case of failure to sync. Make error handling more robust.
-    fn connect(&self) {
-        let rpc_client: Client = Client::new(
+    async fn connect(&self) -> Result<Never> {
+        let rpc_client: Client = task::block_in_place(|| Client::new(
             "https://127.0.0.1:18443",
             Auth::CookieFile(COOKIE_FILE_PATH.into()),
-        ).unwrap();
+        ))?;
 
-        let blockchain_info = rpc_client.get_blockchain_info().unwrap();
+        let blockchain_info = task::block_in_place(|| rpc_client.get_blockchain_info())?;
         println!("Connected to Bitcoin Core RPC.\n  Chain: {}\n  Latest block: {} at height {}",
             blockchain_info.chain, blockchain_info.best_block_hash, blockchain_info.blocks);
 
@@ -79,22 +84,24 @@ impl WalletService for WalletServiceImpl {
         println!("Current wallet tip is: {} at height {}", wallet_tip.hash(), start_height);
 
         let mut emitter = Emitter::new(&rpc_client, wallet_tip, start_height);
-        while let Some(block) = emitter.next_block().unwrap() {
+        while let Some(block) = task::block_in_place(|| emitter.next_block())? {
             print!(" {}", block.block_height());
             self.wallet.write().unwrap()
-                .apply_block_connected_to(&block.block, block.block_height(), block.connected_to())
-                .unwrap();
+                .apply_block_connected_to(&block.block, block.block_height(), block.connected_to())?;
         }
         println!();
 
         println!("Syncing mempool...");
-        let mempool_emissions = emitter.mempool().unwrap();
+        let mempool_emissions = task::block_in_place(|| emitter.mempool())?;
         self.wallet.write().unwrap().apply_unconfirmed_txs(mempool_emissions);
 
         println!("Syncing tx confidence map with wallet.");
         self.sync_tx_confidence_map();
 
         println!("Wallet balance after syncing: {}", self.balance().total());
+
+        println!("Polling for further blocks and mempool txs...");
+        Err(WalletErrorKind::Unimplemented) // TODO: Implement polling.
     }
 
     fn balance(&self) -> Balance {
@@ -133,4 +140,15 @@ impl From<bdk_wallet::WalletTx<'_>> for WalletTx {
     fn from(value: bdk_wallet::WalletTx) -> Self {
         Self { txid: value.tx_node.txid, tx: value.tx_node.tx, chain_position: value.chain_position }
     }
+}
+
+pub type Result<T, E = WalletErrorKind> = std::result::Result<T, E>;
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub enum WalletErrorKind {
+    #[error("unimplemented")]
+    Unimplemented,
+    BitcoindRpc(#[from] bdk_bitcoind_rpc::bitcoincore_rpc::Error),
+    ApplyHeader(#[from] bdk_wallet::chain::local_chain::ApplyHeaderError),
 }
