@@ -28,8 +28,8 @@ UTXO and listen for confidence updates (confirmations, reorgs, etc.), running fo
 
 The wallet is currently just hardwired to use _regtest_, without persistence. It uses the `bdk_bitcoind_rpc`
 crate to talk to a local `bitcoind` instance via JSON-RPC on port 18443, authenticated with cookies and with
-data-dir `$PWD/.localnet/bitcoind`. It does a full scan once upon startup, with continual syncing yet to be implemented.
-A `bitcoind` regtest instance may be started up as follows, from the PWD:
+data-dir `$PWD/.localnet/bitcoind`. It does a full scan once upon startup, then polls once per second. A `bitcoind`
+regtest instance may be started up as follows, from the PWD:
 
 ```sh
 bitcoind -regtest -prune=0 -txindex=1 -blockfilterindex=1 -server -datadir=.localnet/bitcoind

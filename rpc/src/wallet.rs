@@ -9,6 +9,7 @@ use futures::stream::{BoxStream, StreamExt as _};
 use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
 use tokio::task;
+use tokio::time::{self, Duration, MissedTickBehavior};
 
 use crate::observable::ObservableHashMap;
 
@@ -101,7 +102,24 @@ impl WalletService for WalletServiceImpl {
         println!("Wallet balance after syncing: {}", self.balance().total());
 
         println!("Polling for further blocks and mempool txs...");
-        Err(WalletErrorKind::Unimplemented) // TODO: Implement polling.
+        let mut interval = time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+
+            while let Some(block) = task::block_in_place(|| emitter.next_block())? {
+                println!("New block {} at height {}.", block.block_hash(), block.block_height());
+                self.wallet.write().unwrap()
+                    .apply_block_connected_to(&block.block, block.block_height(), block.connected_to())?;
+            }
+
+            let mempool_emissions = task::block_in_place(|| emitter.mempool())?;
+            self.wallet.write().unwrap().apply_unconfirmed_txs(mempool_emissions);
+
+            // TODO: Skip needless cache/map updates if the wallet hasn't actually changed:
+            self.sync_tx_confidence_map();
+        }
     }
 
     fn balance(&self) -> Balance {
@@ -147,8 +165,6 @@ pub type Result<T, E = WalletErrorKind> = std::result::Result<T, E>;
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub enum WalletErrorKind {
-    #[error("unimplemented")]
-    Unimplemented,
     BitcoindRpc(#[from] bdk_bitcoind_rpc::bitcoincore_rpc::Error),
     ApplyHeader(#[from] bdk_wallet::chain::local_chain::ApplyHeaderError),
 }
