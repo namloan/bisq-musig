@@ -41,4 +41,23 @@ If you want to get a feeling about this project, check it out and start the test
 , please see this section [Running Integration Tests](./adaptor/README.md).
 Accepted contributions are eligible for compensation, so you could earn money for your work.
 
+## running the tests
 
+to run the test you need a work regtest environment as provided by nigiri. You may need to
+for whatever reason I nigiri isn't fully operable unless you stop and start it again.
+Once after start-up I need to run this:
+
+```bash
+
+nigiri stop
+nigiri start
+```
+
+then to run the tests:
+
+```bash
+
+cd protocol
+cargo test --package protocol --lib tests -- --test-threads=1 --nocapture
+
+```

@@ -337,9 +337,9 @@ impl BMPProtocol {
         };
 
         let swap_part_sig = self.swap_tx.build_partial_sig(&self.ctx, bob.swap_pub_nonce, adaptor_point, &self.deposit_tx)?;
-        dbg!("{:?} me", self.ctx.role);
+        // dbg!("{:?} me", self.ctx.role);
         let (_p_part_me, _q_part_me) = self.warning_tx_me.build_partial_sig(&self.ctx, &bob.warn_bob_p_nonce, &bob.warn_bob_q_nonce, &self.deposit_tx)?;
-        dbg!("{:?} peer", self.ctx.role);
+        // dbg!("{:?} peer", self.ctx.role);
         let (p_part_peer, q_part_peer) = self.warning_tx_peer.build_partial_sig(&self.ctx, &bob.warn_alice_p_nonce, &bob.warn_alice_q_nonce, &self.deposit_tx)?;
         //ClaimTx
         self.claim_tx_me.build_partial_sig(&self.ctx, &bob.claim_bob_nonce, &self.warning_tx_me)?; // no nneed to send my partial sig to peer
@@ -450,7 +450,7 @@ impl RedirectTx {
         };
         outputs.push(anchor_output);
         let t1 = Sequence::from_height(1); // TODO define as const and find a good value
-        // let t2 = Sequence::from_seconds_ceil(1)?; // TODO define as const and find a good value
+        // let t1 = Sequence::from_seconds_ceil(1)?; // TODO define as const and find a good value
         let input0 = TxIn {
             previous_output: warn_tx.funds_as_outpoint(),
             script_sig: ScriptBuf::default(),
@@ -897,7 +897,7 @@ impl DepositTx {
         total = builder.merge(other_psbt, true, total, disregard_scripts)?;
 
         builder.fee_absolute(Amount::from_sat(total as u64));
-        builder.nlocktime(LockTime::ZERO); // TODO RBF disabled anyway, so this value can be disregarded.
+        builder.nlocktime(LockTime::ZERO);
 
         // Attempt to finish and return the merged PSBT
         let mut merged_psbt = builder.finish()?;
@@ -1076,9 +1076,7 @@ impl TMuSig2 {
                                         tx: &Transaction) // the current transaction which needs the signature
                                         -> anyhow::Result<PartialSignature> { // the partial transaction with adaptor to be sent to the other party.
         // calculate aggregated nonce first.
-        // TODO, how to make sure we have the correct ordering of partial nonces?
-        let mut total_nonce = [self.pub_nonce.clone(), other_nonce.clone()];
-        total_nonce.sort();
+        let total_nonce = [self.pub_nonce.clone(), other_nonce.clone()];
         let agg_nonce = AggNonce::sum(total_nonce);
         self.agg_nonce = Some(agg_nonce.clone());
         self.other_nonce = Some(other_nonce.clone());
@@ -1118,9 +1116,7 @@ impl TMuSig2 {
     */
     pub fn aggregate_sigs(&mut self, other_sig: PartialSignature) -> anyhow::Result<()> {
         let my_adaptor = self.adaptor_sig.as_mut().unwrap();
-        // TODO verify other_sig, this is strictly not necessary but fail fast is always good
-        //         musig2::signing::verify_partial_adaptor() why is signing module private
-
+        // verify other_sig is strictly not necessary but fail fast is always good
         musig2::adaptor::verify_partial(
             self.agg_key.key_agg_context.as_ref().unwrap(),
             other_sig,
@@ -1131,7 +1127,6 @@ impl TMuSig2 {
             my_adaptor.msg,
         )
             .expect("invalid partial signature");
-        println!("other_sig passed.");
 
         let my_sig = my_adaptor.partial_sig.clone();
 
@@ -1170,7 +1165,6 @@ impl TMuSig2 {
             .expect("invalid decrypted adaptor signature");
 
         // valid_signature must be made into Taprrot signature, means we need to tweak with merkle_root (even if we don't have a merkle root)
-
         // stuff the valid signature into the transaction
         let ts = bitcoin::taproot::Signature::from_slice(valid_signature.serialize().as_ref())?;
 
@@ -1203,8 +1197,8 @@ impl TMuSig2 {
             [sec_adaptor, tik.sec]
         };
         let agg_sec = tik.key_agg_context.as_mut().unwrap().aggregated_seckey(seckeys)?;
+        // lib has checked that the aggregated generated key actually works
         tik.agg_sec = Some(agg_sec);
-        // TODO shall we check here if the aggregated secret key actually works?
         Ok(())
     }
     pub fn extract_p2tr_key_path_signature(tx: &Transaction, input_index: usize) -> anyhow::Result<Signature> {
@@ -1254,7 +1248,7 @@ impl PointExt for Point {
     fn key_spend_no_merkle_address(&self) -> anyhow::Result<Address> {
         let pubkey = PublicKey::from_slice(&self.serialize())?.to_x_only_pubkey();
         let secp = Secp256k1::new(); // TODO make it static?
-        let adr = Address::p2tr(&secp, pubkey, None, KnownHrp::Regtest);
+        let adr = Address::p2tr(&secp, pubkey, None, KnownHrp::Regtest); // TODO parameterize Network
         Ok(adr)
     }
 }
