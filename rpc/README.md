@@ -16,17 +16,20 @@ See [MuSig trade protocol messages](musig-trade-protocol-messages.txt) for my cu
 trade messages between the peers would look like, and thus the necessary data to exchange in an RPC interface between
 the Bisq2 client and the Rust server managing the wallet and key material.
 
-### Experimental wallet gRPC interface and test CLI
+### Experimental wallet gRPC interface and test CLI + Java client
 
 To help test and develop the wallet and chain notification API that will be needed by Bisq, a small Rust gRPC client
 with a command-line interface is also included as a binary target (`musig-cli`). Currently, this is providing access to
 a handful of experimental wallet RPC endpoints that will talk to BDK to get account balance, UTXO set, block reorg
 notifications, etc. (only partially implemented).
 
+A non-interactive Java test gRPC client has also been written to query the UTXO set, then open an RPC stream for each
+UTXO and listen for confidence updates (confirmations, reorgs, etc.), running for a few seconds.
+
 The wallet is currently just hardwired to use _regtest_, without persistence. It uses the `bdk_bitcoind_rpc`
 crate to talk to a local `bitcoind` instance via JSON-RPC on port 18443, authenticated with cookies and with
-data-dir `$PWD/.localnet/bitcoind`. It does a full scan once upon startup, with continual syncing yet to be implemented.
-A `bitcoind` regtest instance may be started up as follows, from the PWD:
+data-dir `$PWD/.localnet/bitcoind`. It does a full scan once upon startup, then polls once per second. A `bitcoind`
+regtest instance may be started up as follows, from the PWD:
 
 ```sh
 bitcoind -regtest -prune=0 -txindex=1 -blockfilterindex=1 -server -datadir=.localnet/bitcoind
@@ -60,4 +63,10 @@ cargo run
 
 ```sh
 mvn install exec:java
+```
+
+5. To subsequently run the Java test client for the wallet gRPC interface, run:
+
+```sh
+mvn exec:java -Pwallet
 ```

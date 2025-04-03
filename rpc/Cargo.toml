@@ -16,6 +16,7 @@ path = "src/client.rs"
 bdk_bitcoind_rpc = "0.18.0"
 bdk_wallet = "1.1.0"
 clap = { version = "4.5.31", features = ["derive"] }
+drop-stream = "0.3.2"
 futures = "0.3.31"
 musig2 = { version = "0.2.3", features = ["rand"] }
 prost = "0.13.4"
@@ -34,12 +35,13 @@ pedantic = "warn"
 # Enable selected 'nursery' and 'restriction' lints...
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
+branches_sharing_code = "warn"
 iter_on_single_items = "warn"
 iter_on_empty_collections = "warn"
+missing_const_for_fn = "warn"
 renamed_function_params = "warn"
 significant_drop_tightening = "warn"
 str_to_string = "warn"
 try_err = "warn"
 unused_trait_names = "warn"
-# Format arg handling in IDEA Rust plugin is broken:
-uninlined_format_args = { level = "allow", priority = 1 }
+use_self = "warn"

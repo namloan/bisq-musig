@@ -2,7 +2,6 @@ mod walletrpc;
 
 use bdk_wallet::bitcoin::hashes::{Hash as _, sha256d};
 use clap::{Parser, Subcommand};
-use std::prelude::rust_2021::*;
 use tokio_stream::StreamExt as _;
 use tonic::Request;
 
@@ -39,17 +38,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::WalletBalance => {
             let response = client.wallet_balance(Request::new(WalletBalanceRequest {})).await?;
             drop(client);
-            println!("{:#?}", response);
+            println!("{response:#?}");
         }
         Commands::NewAddress => {
             let response = client.new_address(Request::new(NewAddressRequest {})).await?;
             drop(client);
-            println!("{:#?}", response);
+            println!("{response:#?}");
         }
         Commands::ListUnspent => {
             let response = client.list_unspent(Request::new(ListUnspentRequest {})).await?;
             drop(client);
-            println!("{:?}", response);
+            println!("{response:?}");
         }
         Commands::NotifyConfidence { tx_id } => {
             let tx_id = tx_id.parse::<sha256d::Hash>()?.as_byte_array().to_vec();

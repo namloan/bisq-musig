@@ -1,3 +1,4 @@
+mod observable;
 mod protocol;
 mod storage;
 mod wallet;
@@ -20,8 +21,8 @@ use prost::UnknownEnumValue;
 use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::marker::{Send, Sync};
-use std::prelude::rust_2021::*;
 use std::sync::Arc;
+use tokio::task;
 use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
@@ -225,8 +226,7 @@ impl wallet_server::Wallet for WalletImpl {
 
         let txid = request.into_inner().tx_id.my_try_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
-            .ok_or_else(|| Status::not_found(format!("could not find wallet tx with id: {}", txid)))?
-            .map(|o| Ok(o.into()))
+            .map(|o| Ok(o.map(Into::into).unwrap_or_default()))
             .boxed();
 
         Ok(Response::new(conf_events))
@@ -255,7 +255,7 @@ impl_musig_req!(CloseTradeRequest);
 fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Response<Res>>
     where Req: MusigRequest,
           F: FnOnce(Req, &mut TradeModel) -> Result<Res> {
-    println!("Got a request: {:?}", request);
+    println!("Got a request: {request:?}");
 
     let request = request.into_inner();
     let trade_model = TRADE_MODELS.get_trade_model(request.trade_id())
@@ -313,7 +313,7 @@ impl MyTryInto<Txid> for &[u8] {
 impl MyTryInto<Role> for i32 {
     fn my_try_into(self) -> Result<Role> {
         TryInto::<musigrpc::Role>::try_into(self)
-            .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {}", i)))
+            .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {i}")))
             .map(Into::into)
     }
 }
@@ -321,7 +321,7 @@ impl MyTryInto<Role> for i32 {
 impl MyTryInto<Address<NetworkUnchecked>> for &str {
     fn my_try_into(self) -> Result<Address<NetworkUnchecked>> {
         self.parse::<Address<_>>()
-            .map_err(|e| Status::invalid_argument(format!("could not parse address: {}", e)))
+            .map_err(|e| Status::invalid_argument(format!("could not parse address: {e}")))
     }
 }
 
@@ -349,7 +349,7 @@ impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
 
 impl From<ExchangedNonces<'_, ByRef>> for NonceSharesMessage {
     fn from(value: ExchangedNonces<ByRef>) -> Self {
-        NonceSharesMessage {
+        Self {
             // Use default values for proto fields besides the nonce shares. TODO: A little hacky; consider refactoring proto.
             warning_tx_fee_bump_address: String::default(),
             redirect_tx_fee_bump_address: String::default(),
@@ -396,7 +396,7 @@ impl<'a> MyTryInto<ExchangedNonces<'a, ByVal>> for NonceSharesMessage {
 
 impl From<ExchangedSigs<'_, ByRef>> for PartialSignaturesMessage {
     fn from(value: ExchangedSigs<ByRef>) -> Self {
-        PartialSignaturesMessage {
+        Self {
             peers_warning_tx_buyer_input_partial_signature:
             value.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
             peers_warning_tx_seller_input_partial_signature:
@@ -426,7 +426,7 @@ impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
 
 impl From<Balance> for WalletBalanceResponse {
     fn from(value: Balance) -> Self {
-        WalletBalanceResponse {
+        Self {
             immature: value.immature.to_sat(),
             trusted_pending: value.trusted_pending.to_sat(),
             untrusted_pending: value.untrusted_pending.to_sat(),
@@ -437,7 +437,7 @@ impl From<Balance> for WalletBalanceResponse {
 
 impl From<LocalOutput> for TransactionOutput {
     fn from(value: LocalOutput) -> Self {
-        TransactionOutput {
+        Self {
             tx_id: value.outpoint.txid.as_byte_array().into(),
             vout: value.outpoint.vout,
             script_pub_key: value.txout.script_pubkey.into_bytes(),
@@ -459,8 +459,8 @@ impl From<TxConfidence> for ConfEvent {
                 })),
             ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
         };
-        ConfEvent {
-            raw_tx,
+        Self {
+            raw_tx: Some(raw_tx),
             confidence_type: confidence_type.into(),
             num_confirmations,
             confirmation_block_time,
@@ -474,7 +474,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let musig = MusigImpl::default();
     let wallet = WalletImpl { wallet_service: Arc::new(WalletServiceImpl::new()) };
     let wallet_service = wallet.wallet_service.clone();
-    tokio::task::spawn_blocking(move || { wallet_service.connect() });
+    task::spawn(async move {
+        let Err(e) = wallet_service.connect().await;
+        eprintln!("Wallet connection error: {e}");
+    });
 
     Server::builder()
         .add_service(MusigServer::new(musig))
@@ -483,4 +486,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::walletrpc::{ConfEvent, ConfidenceType};
+
+    #[test]
+    fn conf_event_default() {
+        let missing_tx_conf_event = ConfEvent {
+            raw_tx: None,
+            confidence_type: ConfidenceType::Missing.into(),
+            num_confirmations: 0,
+            confirmation_block_time: None,
+        };
+        assert_eq!(ConfEvent::default(), missing_tx_conf_event);
+    }
 }

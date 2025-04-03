@@ -493,6 +493,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "drop-stream"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf3ad5e2193e855cdd101d6d4ad09f0b3fa9aa5bd5169f483b4accd6eef96cfe"
+dependencies = [
+ "futures-core",
+ "pin-project",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1201,6 +1211,7 @@ dependencies = [
  "bdk_bitcoind_rpc",
  "bdk_wallet",
  "clap",
+ "drop-stream",
  "futures",
  "musig2",
  "prost",

@@ -48,15 +48,16 @@ message ConfRequest {
 }
 
 message ConfEvent {
-  bytes rawTx = 1;
+  optional bytes rawTx = 1;
   ConfidenceType confidenceType = 2;
   uint32 numConfirmations = 3;
   optional ConfirmationBlockTime confirmationBlockTime = 4;
 }
 
 enum ConfidenceType {
-  CONFIRMED = 0;
+  MISSING = 0; // used as default; MUST have index 0
   UNCONFIRMED = 1;
+  CONFIRMED = 2;
 }
 
 message ConfirmationBlockTime {
