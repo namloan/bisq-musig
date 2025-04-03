@@ -15,7 +15,7 @@ Main changes to the Bisq1 protocol are:
 
 This project is the handling the cryptographic part of the overall protocol. Even though it is the centerpiece there are more pieces necessary to pull this off.
 Here is an Overview drawing:
-![modules](./concept/bisq-musig-modules.png)
+![modules](concept/renderedForWeb/bisq-musig-modules.png)
 
 ## docs
 
@@ -61,3 +61,9 @@ cd protocol
 cargo test --package protocol --lib tests -- --test-threads=1 --nocapture
 
 ```
+
+## reading the Markdown files
+
+Some of the markdown files have LaTeX included, you can best view them using RustRover.
+Github sucks at displaying LaTeX. I also keep an html-export of the markdown files
+in the directory 'renderedForWeb', so you can view them without RustRover.
