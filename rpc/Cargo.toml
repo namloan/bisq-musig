@@ -14,21 +14,20 @@ path = "src/client.rs"
 
 [dependencies]
 bdk_bitcoind_rpc = "0.18.0"
-bdk_wallet = "1.1.0"
-clap = { version = "4.5.31", features = ["derive"] }
+bdk_wallet = "1.2.0"
+clap = { version = "4.5.35", features = ["derive"] }
 drop-stream = "0.3.2"
 futures = "0.3.31"
-musig2 = { version = "0.2.3", features = ["rand"] }
-prost = "0.13.4"
+musig2 = { version = "0.2.4", features = ["rand"] }
+prost = "0.13.5"
 rand = "0.8.5"
-secp = { version = "0.4.1", features = ["rand"] }
-thiserror = "2.0.11"
-tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "time"] }
+thiserror = "2.0.12"
+tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "time"] }
 tokio-stream = "0.1.17"
-tonic = "0.12.3"
+tonic = "0.13.0"
 
 [build-dependencies]
-tonic-build = "0.12.3"
+tonic-build = "0.13.0"
 
 [lints.clippy]
 pedantic = "warn"

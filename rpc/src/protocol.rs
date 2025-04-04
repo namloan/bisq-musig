@@ -3,7 +3,7 @@ use bdk_wallet::bitcoin::address::{NetworkChecked, NetworkUnchecked, NetworkVali
 use musig2::{AggNonce, KeyAggContext, LiftedSignature, NonceSeed, PartialSignature, PubNonce,
     SecNonce, SecNonceBuilder};
 use musig2::adaptor::AdaptorSignature;
-use secp::{MaybePoint, MaybeScalar, Point, Scalar};
+use musig2::secp::{MaybePoint, MaybeScalar, Point, Scalar};
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
@@ -623,6 +623,6 @@ pub enum ProtocolErrorKind {
     Signing(#[from] musig2::errors::SigningError),
     Verify(#[from] musig2::errors::VerifyError),
     InvalidSecretKeys(#[from] musig2::errors::InvalidSecretKeysError),
-    ZeroScalar(#[from] secp::errors::ZeroScalarError),
+    ZeroScalar(#[from] musig2::secp::errors::ZeroScalarError),
     AddressParse(#[from] bdk_wallet::bitcoin::address::ParseError),
 }

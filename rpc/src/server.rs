@@ -12,18 +12,18 @@ use bdk_wallet::bitcoin::hashes::Hash as _;
 use bdk_wallet::chain::ChainPosition;
 use futures::stream::{self, BoxStream, StreamExt as _};
 use musig2::{LiftedSignature, PubNonce};
+use musig2::secp::{Point, MaybeScalar, Scalar};
 use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
     NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage, PartialSignaturesRequest,
     PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest, ReceiverAddressAndAmount,
     SwapTxSignatureRequest, SwapTxSignatureResponse, TxConfirmationStatus};
 use musigrpc::musig_server::{self, MusigServer};
 use prost::UnknownEnumValue;
-use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::marker::{Send, Sync};
 use std::sync::Arc;
 use tokio::task;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response, Result, Status};
 use tonic::transport::Server;
 
 use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, RedirectionReceiver, Role,
@@ -264,8 +264,6 @@ fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Resp
 
     Ok(Response::new(response))
 }
-
-type Result<T, E = Status> = std::result::Result<T, E>;
 
 impl From<musigrpc::Role> for Role {
     fn from(value: musigrpc::Role) -> Self {
