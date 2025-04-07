@@ -18,7 +18,7 @@ use tokio::task;
 use tonic::{Request, Response, Result, Status};
 use tonic::transport::Server;
 
-use crate::pb::convert::MyTryInto;
+use crate::pb::convert::TryProtoInto;
 use crate::pb::musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt,
     DepositTxSignatureRequest, NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage,
     PartialSignaturesRequest, PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest,
@@ -47,7 +47,7 @@ impl musig_server::Musig for MusigImpl {
         println!("Got a request: {request:?}");
 
         let request = request.into_inner();
-        let mut trade_model = TradeModel::new(request.trade_id, request.my_role.my_try_into()?);
+        let mut trade_model = TradeModel::new(request.trade_id, request.my_role.try_proto_into()?);
         trade_model.init_my_key_shares();
         let my_key_shares = trade_model.get_my_key_shares()
             .ok_or_else(|| Status::internal("missing key shares"))?;
@@ -64,8 +64,8 @@ impl musig_server::Musig for MusigImpl {
     async fn get_nonce_shares(&self, request: Request<NonceSharesRequest>) -> Result<Response<NonceSharesMessage>> {
         handle_request(request, move |request, trade_model| {
             trade_model.set_peer_key_shares(
-                request.buyer_output_peers_pub_key_share.my_try_into()?,
-                request.seller_output_peers_pub_key_share.my_try_into()?);
+                request.buyer_output_peers_pub_key_share.try_proto_into()?,
+                request.seller_output_peers_pub_key_share.try_proto_into()?);
             trade_model.aggregate_key_shares()?;
             trade_model.trade_amount = Some(Amount::from_sat(request.trade_amount));
             trade_model.buyers_security_deposit = Some(Amount::from_sat(request.buyers_security_deposit));
@@ -94,11 +94,11 @@ impl musig_server::Musig for MusigImpl {
             let peer_nonce_shares = request.peers_nonce_shares
                 .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
             trade_model.set_peer_fee_bump_addresses([
-                (&peer_nonce_shares.warning_tx_fee_bump_address).my_try_into()?,
-                (&peer_nonce_shares.redirect_tx_fee_bump_address).my_try_into()?
+                (&peer_nonce_shares.warning_tx_fee_bump_address).try_proto_into()?,
+                (&peer_nonce_shares.redirect_tx_fee_bump_address).try_proto_into()?
             ])?;
-            trade_model.set_redirection_receivers(request.receivers.into_iter().map(MyTryInto::my_try_into))?;
-            trade_model.set_peer_nonce_shares(peer_nonce_shares.my_try_into()?);
+            trade_model.set_redirection_receivers(request.receivers.into_iter().map(TryProtoInto::try_proto_into))?;
+            trade_model.set_peer_nonce_shares(peer_nonce_shares.try_proto_into()?);
             trade_model.aggregate_nonce_shares()?;
             trade_model.sign_partial()?;
             let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
@@ -112,7 +112,7 @@ impl musig_server::Musig for MusigImpl {
         handle_request(request, move |request, trade_model| {
             let peers_partial_signatures = request.peers_partial_signatures
                 .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
-            trade_model.set_peer_partial_signatures_on_my_txs(&peers_partial_signatures.my_try_into()?);
+            trade_model.set_peer_partial_signatures_on_my_txs(&peers_partial_signatures.try_proto_into()?);
             trade_model.aggregate_partial_signatures()?;
 
             Ok(DepositPsbt { deposit_psbt: b"deposit_psbt".into() })
@@ -137,7 +137,7 @@ impl musig_server::Musig for MusigImpl {
 
     async fn sign_swap_tx(&self, request: Request<SwapTxSignatureRequest>) -> Result<Response<SwapTxSignatureResponse>> {
         handle_request(request, move |request, trade_model| {
-            trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?);
+            trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.try_proto_into()?);
             trade_model.aggregate_swap_tx_partial_signatures()?;
             let sig = trade_model.compute_swap_tx_input_signature()?;
             let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
@@ -153,11 +153,11 @@ impl musig_server::Musig for MusigImpl {
 
     async fn close_trade(&self, request: Request<CloseTradeRequest>) -> Result<Response<CloseTradeResponse>> {
         handle_request(request, move |request, trade_model| {
-            if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
+            if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.try_proto_into()? {
                 // Trader receives the private key share from a cooperative peer, closing our trade.
                 trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
                 trade_model.aggregate_private_keys_for_my_output()?;
-            } else if let Some(swap_tx_input_signature) = request.swap_tx.my_try_into()? {
+            } else if let Some(swap_tx_input_signature) = request.swap_tx.try_proto_into()? {
                 // Buyer supplies a signed swap tx to the Rust server, to close our trade. (Mainly for
                 // testing -- normally the tx would be picked up from the bitcoin network by the server.)
                 trade_model.recover_seller_private_key_share_for_buyer_output(&swap_tx_input_signature)?;
@@ -214,7 +214,7 @@ impl wallet_server::Wallet for WalletImpl {
     async fn register_confidence_ntfn(&self, request: Request<ConfRequest>) -> Result<Response<Self::RegisterConfidenceNtfnStream>> {
         println!("Got a request: {request:?}");
 
-        let txid = request.into_inner().tx_id.my_try_into()?;
+        let txid = request.into_inner().tx_id.try_proto_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
             .map(|o| Ok(o.map(Into::into).unwrap_or_default()))
             .boxed();

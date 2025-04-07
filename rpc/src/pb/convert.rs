@@ -17,101 +17,101 @@ use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, Redirec
 use crate::storage::{ByRef, ByVal};
 use crate::wallet::TxConfidence;
 
-pub trait MyTryInto<T> {
-    fn my_try_into(self) -> Result<T>;
+pub trait TryProtoInto<T> {
+    fn try_proto_into(self) -> Result<T>;
 }
 
-macro_rules! impl_my_try_into_for_slice {
+macro_rules! impl_try_proto_into_for_slice {
     ($into_type:ty, $err_msg:literal) => {
-        impl MyTryInto<$into_type> for &[u8] {
-            fn my_try_into(self) -> Result<$into_type> {
+        impl TryProtoInto<$into_type> for &[u8] {
+            fn try_proto_into(self) -> Result<$into_type> {
                 self.try_into().map_err(|_| Status::invalid_argument($err_msg))
             }
         }
     }
 }
 
-impl_my_try_into_for_slice!(Point, "could not decode nonzero point");
-impl_my_try_into_for_slice!(PubNonce, "could not decode pub nonce");
-impl_my_try_into_for_slice!(Scalar, "could not decode nonzero scalar");
-impl_my_try_into_for_slice!(MaybeScalar, "could not decode scalar");
-impl_my_try_into_for_slice!(LiftedSignature, "could not decode signature");
+impl_try_proto_into_for_slice!(Point, "could not decode nonzero point");
+impl_try_proto_into_for_slice!(PubNonce, "could not decode pub nonce");
+impl_try_proto_into_for_slice!(Scalar, "could not decode nonzero scalar");
+impl_try_proto_into_for_slice!(MaybeScalar, "could not decode scalar");
+impl_try_proto_into_for_slice!(LiftedSignature, "could not decode signature");
 
-impl MyTryInto<Txid> for &[u8] {
-    fn my_try_into(self) -> Result<Txid> {
+impl TryProtoInto<Txid> for &[u8] {
+    fn try_proto_into(self) -> Result<Txid> {
         Txid::from_slice(self).map_err(|_| Status::invalid_argument("could not decode txid"))
     }
 }
 
-impl MyTryInto<Role> for i32 {
-    fn my_try_into(self) -> Result<Role> {
+impl TryProtoInto<Role> for i32 {
+    fn try_proto_into(self) -> Result<Role> {
         TryInto::<musigrpc::Role>::try_into(self)
             .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {i}")))
             .map(Into::into)
     }
 }
 
-impl MyTryInto<Address<NetworkUnchecked>> for &str {
-    fn my_try_into(self) -> Result<Address<NetworkUnchecked>> {
+impl TryProtoInto<Address<NetworkUnchecked>> for &str {
+    fn try_proto_into(self) -> Result<Address<NetworkUnchecked>> {
         self.parse::<Address<_>>()
             .map_err(|e| Status::invalid_argument(format!("could not parse address: {e}")))
     }
 }
 
-impl MyTryInto<RedirectionReceiver<NetworkUnchecked>> for ReceiverAddressAndAmount {
-    fn my_try_into(self) -> Result<RedirectionReceiver<NetworkUnchecked>> {
+impl TryProtoInto<RedirectionReceiver<NetworkUnchecked>> for ReceiverAddressAndAmount {
+    fn try_proto_into(self) -> Result<RedirectionReceiver<NetworkUnchecked>> {
         Ok(RedirectionReceiver {
-            address: self.address.my_try_into()?,
+            address: self.address.try_proto_into()?,
             amount: Amount::from_sat(self.amount),
         })
     }
 }
 
-impl<T> MyTryInto<T> for Vec<u8> where for<'a> &'a [u8]: MyTryInto<T> {
-    fn my_try_into(self) -> Result<T> { (&self[..]).my_try_into() }
+impl<T> TryProtoInto<T> for Vec<u8> where for<'a> &'a [u8]: TryProtoInto<T> {
+    fn try_proto_into(self) -> Result<T> { (&self[..]).try_proto_into() }
 }
 
-impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
-    fn my_try_into(self) -> Result<Option<T>> {
+impl<T, S: TryProtoInto<T>> TryProtoInto<Option<T>> for Option<S> {
+    fn try_proto_into(self) -> Result<Option<T>> {
         Ok(match self {
             None => None,
-            Some(x) => Some(x.my_try_into()?)
+            Some(x) => Some(x.try_proto_into()?)
         })
     }
 }
 
-impl<'a> MyTryInto<ExchangedNonces<'a, ByVal>> for NonceSharesMessage {
-    fn my_try_into(self) -> Result<ExchangedNonces<'a, ByVal>> {
+impl<'a> TryProtoInto<ExchangedNonces<'a, ByVal>> for NonceSharesMessage {
+    fn try_proto_into(self) -> Result<ExchangedNonces<'a, ByVal>> {
         Ok(ExchangedNonces {
             swap_tx_input_nonce_share:
-            self.swap_tx_input_nonce_share.my_try_into()?,
+            self.swap_tx_input_nonce_share.try_proto_into()?,
             buyers_warning_tx_buyer_input_nonce_share:
-            self.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+            self.buyers_warning_tx_buyer_input_nonce_share.try_proto_into()?,
             buyers_warning_tx_seller_input_nonce_share:
-            self.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
+            self.buyers_warning_tx_seller_input_nonce_share.try_proto_into()?,
             sellers_warning_tx_buyer_input_nonce_share:
-            self.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
+            self.sellers_warning_tx_buyer_input_nonce_share.try_proto_into()?,
             sellers_warning_tx_seller_input_nonce_share:
-            self.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
+            self.sellers_warning_tx_seller_input_nonce_share.try_proto_into()?,
             buyers_redirect_tx_input_nonce_share:
-            self.buyers_redirect_tx_input_nonce_share.my_try_into()?,
+            self.buyers_redirect_tx_input_nonce_share.try_proto_into()?,
             sellers_redirect_tx_input_nonce_share:
-            self.sellers_redirect_tx_input_nonce_share.my_try_into()?,
+            self.sellers_redirect_tx_input_nonce_share.try_proto_into()?,
         })
     }
 }
 
-impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
-    fn my_try_into(self) -> Result<ExchangedSigs<'a, ByVal>> {
+impl<'a> TryProtoInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
+    fn try_proto_into(self) -> Result<ExchangedSigs<'a, ByVal>> {
         Ok(ExchangedSigs {
             peers_warning_tx_buyer_input_partial_signature:
-            self.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
+            self.peers_warning_tx_buyer_input_partial_signature.try_proto_into()?,
             peers_warning_tx_seller_input_partial_signature:
-            self.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
+            self.peers_warning_tx_seller_input_partial_signature.try_proto_into()?,
             peers_redirect_tx_input_partial_signature:
-            self.peers_redirect_tx_input_partial_signature.my_try_into()?,
+            self.peers_redirect_tx_input_partial_signature.try_proto_into()?,
             swap_tx_input_partial_signature:
-            self.swap_tx_input_partial_signature.my_try_into()?,
+            self.swap_tx_input_partial_signature.try_proto_into()?,
         })
     }
 }
