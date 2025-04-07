@@ -164,7 +164,7 @@ impl TradeModel {
         ])
     }
 
-    pub fn set_peer_key_shares(&mut self, buyer_output_pub_key: Point, seller_output_pub_key: Point) {
+    pub const fn set_peer_key_shares(&mut self, buyer_output_pub_key: Point, seller_output_pub_key: Point) {
         self.buyer_output_key_ctx.peers_key_share = Some(KeyPair::from_public(buyer_output_pub_key));
         self.seller_output_key_ctx.peers_key_share = Some(KeyPair::from_public(seller_output_pub_key));
         if self.am_buyer() {
@@ -271,7 +271,7 @@ impl TradeModel {
         })
     }
 
-    pub fn set_peer_nonce_shares(&mut self, peer_nonce_shares: ExchangedNonces<ByVal>) {
+    pub const fn set_peer_nonce_shares(&mut self, peer_nonce_shares: ExchangedNonces<ByVal>) {
         self.swap_tx_input_sig_ctx.peers_nonce_share =
             Some(peer_nonce_shares.swap_tx_input_nonce_share);
         self.buyers_warning_tx_buyer_input_sig_ctx.peers_nonce_share =
@@ -339,7 +339,7 @@ impl TradeModel {
         })
     }
 
-    pub fn set_peer_partial_signatures_on_my_txs(&mut self, sigs: &ExchangedSigs<ByVal>) {
+    pub const fn set_peer_partial_signatures_on_my_txs(&mut self, sigs: &ExchangedSigs<ByVal>) {
         if self.am_buyer() {
             self.buyers_warning_tx_buyer_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_buyer_input_partial_signature);
             self.buyers_warning_tx_seller_input_sig_ctx.peers_partial_sig = Some(sigs.peers_warning_tx_seller_input_partial_signature);
@@ -372,7 +372,7 @@ impl TradeModel {
         Ok(())
     }
 
-    pub fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) {
+    pub const fn set_swap_tx_input_peers_partial_signature(&mut self, sig: PartialSignature) {
         self.swap_tx_input_sig_ctx.peers_partial_sig = Some(sig);
     }
 
@@ -396,8 +396,7 @@ impl TradeModel {
         Some(&peer_key_ctx.my_key_share.as_ref()?.prv_key)
     }
 
-    //noinspection RsSelfConvention
-    fn get_my_key_ctx_mut(&mut self) -> &mut KeyCtx {
+    const fn get_my_key_ctx_mut(&mut self) -> &mut KeyCtx {
         if self.am_buyer() {
             &mut self.buyer_output_key_ctx
         } else {
