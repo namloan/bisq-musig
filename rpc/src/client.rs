@@ -4,7 +4,7 @@ mod pb {
 
 use bdk_wallet::bitcoin::hashes::{Hash as _, sha256d};
 use clap::{Parser, Subcommand};
-use tokio_stream::StreamExt as _;
+use futures::StreamExt as _;
 use tonic::Request;
 
 use crate::pb::walletrpc::{ConfRequest, ListUnspentRequest, NewAddressRequest,
