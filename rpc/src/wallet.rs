@@ -8,7 +8,7 @@ use futures::never::Never;
 use futures::stream::{BoxStream, StreamExt as _};
 use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
-use tokio::task;
+use tokio::task::{self, JoinHandle};
 use tokio::time::{self, Duration, MissedTickBehavior};
 
 use crate::observable::ObservableHashMap;
@@ -23,11 +23,24 @@ const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsR
 
 #[tonic::async_trait]
 pub trait WalletService {
+    /// # Errors
+    /// Will return `Err` if connection or continual sync fails at any point
     async fn connect(&self) -> Result<Never>;
+
     fn balance(&self) -> Balance;
     fn reveal_next_address(&self) -> AddressInfo;
     fn list_unspent(&self) -> Vec<LocalOutput>;
     fn get_tx_confidence_stream(&self, txid: Txid) -> BoxStream<'static, Option<TxConfidence>>;
+
+    /// # Panics
+    /// Will panic if called outside the context of a Tokio runtime
+    fn spawn_connection(self: Arc<Self>) -> JoinHandle<Result<Never>> where Self: Send + Sync + 'static {
+        task::spawn(async move {
+            let Err(e) = self.connect().await;
+            eprintln!("Wallet connection error: {e}");
+            Err(e)
+        })
+    }
 }
 
 pub struct WalletServiceImpl {
@@ -39,11 +52,12 @@ pub struct WalletServiceImpl {
 }
 
 impl WalletServiceImpl {
+    // TODO: Make wallet setup configurable.
     pub fn new() -> Self {
         let wallet = Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
             .network(Network::Regtest)
             .create_wallet_no_persist()
-            .unwrap();
+            .expect("hardcoded descriptors should be valid");
 
         let mut tx_confidence_map = ObservableHashMap::new();
         tx_confidence_map.sync(tx_confidence_entries(&wallet));
@@ -55,6 +69,10 @@ impl WalletServiceImpl {
         let wallet = self.wallet.read().unwrap();
         self.tx_confidence_map.lock().unwrap().sync(tx_confidence_entries(&wallet));
     }
+}
+
+impl Default for WalletServiceImpl {
+    fn default() -> Self { Self::new() }
 }
 
 fn tx_confidence_entries(wallet: &Wallet) -> impl Iterator<Item=(Txid, TxConfidence)> + '_ {

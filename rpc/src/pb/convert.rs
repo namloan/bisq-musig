@@ -18,6 +18,8 @@ use crate::storage::{ByRef, ByVal};
 use crate::wallet::TxConfidence;
 
 pub trait TryProtoInto<T> {
+    /// # Errors
+    /// Will return `Err` if conversion from proto fails
     fn try_proto_into(self) -> Result<T>;
 }
 

@@ -1,34 +1,24 @@
-mod pb {
-    pub mod convert;
-    pub mod musigrpc;
-    pub mod walletrpc;
-}
-
-mod observable;
-mod protocol;
-mod storage;
-mod wallet;
-
 use bdk_wallet::bitcoin::{Amount, FeeRate};
 use futures::stream::{self, BoxStream, StreamExt as _};
 use std::iter;
 use std::marker::{Send, Sync};
 use std::sync::Arc;
-use tokio::task;
 use tonic::{Request, Response, Result, Status};
-use tonic::transport::Server;
 
 use crate::pb::convert::TryProtoInto;
 use crate::pb::musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt,
     DepositTxSignatureRequest, NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage,
     PartialSignaturesRequest, PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest,
     SwapTxSignatureRequest, SwapTxSignatureResponse, TxConfirmationStatus};
-use crate::pb::musigrpc::musig_server::{self, MusigServer};
+use crate::pb::musigrpc::musig_server;
 use crate::pb::walletrpc::{ConfEvent, ConfRequest, ListUnspentRequest, ListUnspentResponse,
     NewAddressRequest, NewAddressResponse, WalletBalanceRequest, WalletBalanceResponse};
-use crate::pb::walletrpc::wallet_server::{self, WalletServer};
+use crate::pb::walletrpc::wallet_server;
 use crate::protocol::{TradeModel, TradeModelStore as _, TRADE_MODELS};
-use crate::wallet::{WalletService, WalletServiceImpl};
+use crate::wallet::WalletService;
+
+pub use musig_server::MusigServer;
+pub use wallet_server::WalletServer;
 
 #[derive(Debug, Default)]
 pub struct MusigImpl {}
@@ -175,7 +165,7 @@ impl musig_server::Musig for MusigImpl {
 }
 
 pub struct WalletImpl {
-    wallet_service: Arc<dyn WalletService + Send + Sync>,
+    pub wallet_service: Arc<dyn WalletService + Send + Sync>,
 }
 
 #[tonic::async_trait]
@@ -253,24 +243,4 @@ fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Resp
     let response = handler(request, &mut trade_model.lock().unwrap())?;
 
     Ok(Response::new(response))
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "127.0.0.1:50051".parse()?;
-    let musig = MusigImpl::default();
-    let wallet = WalletImpl { wallet_service: Arc::new(WalletServiceImpl::new()) };
-    let wallet_service = wallet.wallet_service.clone();
-    task::spawn(async move {
-        let Err(e) = wallet_service.connect().await;
-        eprintln!("Wallet connection error: {e}");
-    });
-
-    Server::builder()
-        .add_service(MusigServer::new(musig))
-        .add_service(WalletServer::new(wallet))
-        .serve(addr)
-        .await?;
-
-    Ok(())
 }

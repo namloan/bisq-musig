@@ -1,15 +1,9 @@
-mod pb {
-    pub mod walletrpc;
-}
-
 use bdk_wallet::bitcoin::hashes::{Hash as _, sha256d};
 use clap::{Parser, Subcommand};
 use futures::StreamExt as _;
+use rpc::pb::walletrpc::{ConfRequest, ListUnspentRequest, NewAddressRequest, WalletBalanceRequest};
+use rpc::pb::walletrpc::wallet_client::WalletClient;
 use tonic::Request;
-
-use crate::pb::walletrpc::{ConfRequest, ListUnspentRequest, NewAddressRequest,
-    WalletBalanceRequest};
-use crate::pb::walletrpc::wallet_client::WalletClient;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]

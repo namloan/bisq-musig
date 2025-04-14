@@ -4,14 +4,6 @@ version = "0.1.0"
 edition = "2021"
 default-run = "musig-cli"
 
-[[bin]]
-name = "musigd"
-path = "src/server.rs"
-
-[[bin]]
-name = "musig-cli"
-path = "src/client.rs"
-
 [dependencies]
 bdk_bitcoind_rpc = "0.18.0"
 bdk_wallet = "1.2.0"
@@ -44,3 +36,7 @@ str_to_string = "warn"
 try_err = "warn"
 unused_trait_names = "warn"
 use_self = "warn"
+# Panics shall generally only result from bugs in callee code, so this gives too many false positives:
+missing_panics_doc = { level = "allow", priority = 1 }
+# Probably shouldn't annotate every (public) pure fn with '#[must_use]', so too many false positives:
+must_use_candidate = { level = "allow", priority = 1 }
