@@ -21,6 +21,9 @@ tonic = "0.13.0"
 [build-dependencies]
 tonic-build = "0.13.0"
 
+[dev-dependencies]
+tokio-util = { version = "0.7.14", features = ["rt"] }
+
 [lints.clippy]
 pedantic = "warn"
 # Enable selected 'nursery' and 'restriction' lints...

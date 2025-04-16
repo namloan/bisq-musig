@@ -240,7 +240,7 @@ mod tests {
         drop(stream1);
         let v = map.remove(&'a');
         assert_eq!(v, Some(4));
-        assert_eq!(map.map.keys().cloned().collect::<String>(), "b",
+        assert_eq!(map.map.keys().copied().collect::<String>(), "b",
             "only key 'b' should remain in the internal map after removing 'a' while unobserved");
 
         drop(map);
