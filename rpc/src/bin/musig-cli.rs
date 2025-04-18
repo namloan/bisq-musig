@@ -1,17 +1,18 @@
-mod walletrpc;
-
 use bdk_wallet::bitcoin::hashes::{Hash as _, sha256d};
 use clap::{Parser, Subcommand};
-use tokio_stream::StreamExt as _;
+use futures::StreamExt as _;
+use rpc::pb::walletrpc::{ConfRequest, ListUnspentRequest, NewAddressRequest, WalletBalanceRequest};
+use rpc::pb::walletrpc::wallet_client::WalletClient;
 use tonic::Request;
-
-use crate::walletrpc::{ConfRequest, ListUnspentRequest, NewAddressRequest, WalletBalanceRequest};
-use crate::walletrpc::wallet_client::WalletClient;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
+#[expect(clippy::doc_markdown, reason = "doc comments are used verbatim by Clap and not intended to be markdown")]
 struct Cli {
+    /// The port of the MuSig daemon
+    #[arg(short, long, default_value_t = 50051)]
+    port: u16,
     #[command(subcommand)]
     commands: Commands,
 }
@@ -32,7 +33,7 @@ enum Commands {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli: Cli = Cli::parse();
 
-    let mut client = WalletClient::connect("http://127.0.0.1:50051").await?;
+    let mut client = WalletClient::connect(format!("http://127.0.0.1:{}", cli.port)).await?;
 
     match cli.commands {
         Commands::WalletBalance => {

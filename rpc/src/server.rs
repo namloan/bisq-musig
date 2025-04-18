@@ -1,44 +1,24 @@
-mod observable;
-mod protocol;
-mod storage;
-mod wallet;
-mod walletrpc;
-
-use bdk_wallet::{Balance, LocalOutput};
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Txid};
-use bdk_wallet::bitcoin::address::NetworkUnchecked;
-use bdk_wallet::bitcoin::consensus::Encodable as _;
-use bdk_wallet::bitcoin::hashes::Hash as _;
-use bdk_wallet::chain::ChainPosition;
+use bdk_wallet::bitcoin::{Amount, FeeRate};
 use futures::stream::{self, BoxStream, StreamExt as _};
-use musig2::{LiftedSignature, PubNonce};
-use musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt, DepositTxSignatureRequest,
-    NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage, PartialSignaturesRequest,
-    PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest, ReceiverAddressAndAmount,
-    SwapTxSignatureRequest, SwapTxSignatureResponse, TxConfirmationStatus};
-use musigrpc::musig_server::{self, MusigServer};
-use prost::UnknownEnumValue;
-use secp::{Point, MaybeScalar, Scalar};
 use std::iter;
 use std::marker::{Send, Sync};
 use std::sync::Arc;
-use tokio::task;
-use tonic::{Request, Response, Status};
-use tonic::transport::Server;
+use tonic::{Request, Response, Result, Status};
 
-use crate::protocol::{ExchangedNonces, ExchangedSigs, ProtocolErrorKind, RedirectionReceiver, Role,
-    TradeModel, TradeModelStore as _, TRADE_MODELS};
-use crate::storage::{ByRef, ByVal};
-use crate::wallet::{TxConfidence, WalletService, WalletServiceImpl};
-use crate::walletrpc::{ConfEvent, ConfRequest, ConfidenceType, ListUnspentRequest,
-    ListUnspentResponse, NewAddressRequest, NewAddressResponse, TransactionOutput,
-    WalletBalanceRequest, WalletBalanceResponse};
-use crate::walletrpc::wallet_server::{self, WalletServer};
+use crate::pb::convert::TryProtoInto;
+use crate::pb::musigrpc::{CloseTradeRequest, CloseTradeResponse, DepositPsbt,
+    DepositTxSignatureRequest, NonceSharesMessage, NonceSharesRequest, PartialSignaturesMessage,
+    PartialSignaturesRequest, PubKeySharesRequest, PubKeySharesResponse, PublishDepositTxRequest,
+    SwapTxSignatureRequest, SwapTxSignatureResponse, TxConfirmationStatus};
+use crate::pb::musigrpc::musig_server;
+use crate::pb::walletrpc::{ConfEvent, ConfRequest, ListUnspentRequest, ListUnspentResponse,
+    NewAddressRequest, NewAddressResponse, WalletBalanceRequest, WalletBalanceResponse};
+use crate::pb::walletrpc::wallet_server;
+use crate::protocol::{TradeModel, TradeModelStore as _, TRADE_MODELS};
+use crate::wallet::WalletService;
 
-mod musigrpc {
-    #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
-    tonic::include_proto!("musigrpc");
-}
+pub use musig_server::MusigServer;
+pub use wallet_server::WalletServer;
 
 #[derive(Debug, Default)]
 pub struct MusigImpl {}
@@ -54,10 +34,10 @@ pub struct MusigImpl {}
 #[tonic::async_trait]
 impl musig_server::Musig for MusigImpl {
     async fn init_trade(&self, request: Request<PubKeySharesRequest>) -> Result<Response<PubKeySharesResponse>> {
-        println!("Got a request: {:?}", request);
+        println!("Got a request: {request:?}");
 
         let request = request.into_inner();
-        let mut trade_model = TradeModel::new(request.trade_id, request.my_role.my_try_into()?);
+        let mut trade_model = TradeModel::new(request.trade_id, request.my_role.try_proto_into()?);
         trade_model.init_my_key_shares();
         let my_key_shares = trade_model.get_my_key_shares()
             .ok_or_else(|| Status::internal("missing key shares"))?;
@@ -74,8 +54,8 @@ impl musig_server::Musig for MusigImpl {
     async fn get_nonce_shares(&self, request: Request<NonceSharesRequest>) -> Result<Response<NonceSharesMessage>> {
         handle_request(request, move |request, trade_model| {
             trade_model.set_peer_key_shares(
-                request.buyer_output_peers_pub_key_share.my_try_into()?,
-                request.seller_output_peers_pub_key_share.my_try_into()?);
+                request.buyer_output_peers_pub_key_share.try_proto_into()?,
+                request.seller_output_peers_pub_key_share.try_proto_into()?);
             trade_model.aggregate_key_shares()?;
             trade_model.trade_amount = Some(Amount::from_sat(request.trade_amount));
             trade_model.buyers_security_deposit = Some(Amount::from_sat(request.buyers_security_deposit));
@@ -104,11 +84,11 @@ impl musig_server::Musig for MusigImpl {
             let peer_nonce_shares = request.peers_nonce_shares
                 .ok_or_else(|| Status::not_found("missing request.peers_nonce_shares"))?;
             trade_model.set_peer_fee_bump_addresses([
-                (&peer_nonce_shares.warning_tx_fee_bump_address).my_try_into()?,
-                (&peer_nonce_shares.redirect_tx_fee_bump_address).my_try_into()?
+                (&peer_nonce_shares.warning_tx_fee_bump_address).try_proto_into()?,
+                (&peer_nonce_shares.redirect_tx_fee_bump_address).try_proto_into()?
             ])?;
-            trade_model.set_redirection_receivers(request.receivers.into_iter().map(MyTryInto::my_try_into))?;
-            trade_model.set_peer_nonce_shares(peer_nonce_shares.my_try_into()?);
+            trade_model.set_redirection_receivers(request.receivers.into_iter().map(TryProtoInto::try_proto_into))?;
+            trade_model.set_peer_nonce_shares(peer_nonce_shares.try_proto_into()?);
             trade_model.aggregate_nonce_shares()?;
             trade_model.sign_partial()?;
             let my_partial_signatures = trade_model.get_my_partial_signatures_on_peer_txs()
@@ -122,7 +102,7 @@ impl musig_server::Musig for MusigImpl {
         handle_request(request, move |request, trade_model| {
             let peers_partial_signatures = request.peers_partial_signatures
                 .ok_or_else(|| Status::not_found("missing request.peers_partial_signatures"))?;
-            trade_model.set_peer_partial_signatures_on_my_txs(&peers_partial_signatures.my_try_into()?);
+            trade_model.set_peer_partial_signatures_on_my_txs(&peers_partial_signatures.try_proto_into()?);
             trade_model.aggregate_partial_signatures()?;
 
             Ok(DepositPsbt { deposit_psbt: b"deposit_psbt".into() })
@@ -147,7 +127,7 @@ impl musig_server::Musig for MusigImpl {
 
     async fn sign_swap_tx(&self, request: Request<SwapTxSignatureRequest>) -> Result<Response<SwapTxSignatureResponse>> {
         handle_request(request, move |request, trade_model| {
-            trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.my_try_into()?);
+            trade_model.set_swap_tx_input_peers_partial_signature(request.swap_tx_input_peers_partial_signature.try_proto_into()?);
             trade_model.aggregate_swap_tx_partial_signatures()?;
             let sig = trade_model.compute_swap_tx_input_signature()?;
             let prv_key_share = trade_model.get_my_private_key_share_for_peer_output()
@@ -163,11 +143,11 @@ impl musig_server::Musig for MusigImpl {
 
     async fn close_trade(&self, request: Request<CloseTradeRequest>) -> Result<Response<CloseTradeResponse>> {
         handle_request(request, move |request, trade_model| {
-            if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.my_try_into()? {
+            if let Some(peer_prv_key_share) = request.my_output_peers_prv_key_share.try_proto_into()? {
                 // Trader receives the private key share from a cooperative peer, closing our trade.
                 trade_model.set_peer_private_key_share_for_my_output(peer_prv_key_share)?;
                 trade_model.aggregate_private_keys_for_my_output()?;
-            } else if let Some(swap_tx_input_signature) = request.swap_tx.my_try_into()? {
+            } else if let Some(swap_tx_input_signature) = request.swap_tx.try_proto_into()? {
                 // Buyer supplies a signed swap tx to the Rust server, to close our trade. (Mainly for
                 // testing -- normally the tx would be picked up from the bitcoin network by the server.)
                 trade_model.recover_seller_private_key_share_for_buyer_output(&swap_tx_input_signature)?;
@@ -185,13 +165,13 @@ impl musig_server::Musig for MusigImpl {
 }
 
 pub struct WalletImpl {
-    wallet_service: Arc<dyn WalletService + Send + Sync>,
+    pub wallet_service: Arc<dyn WalletService + Send + Sync>,
 }
 
 #[tonic::async_trait]
 impl wallet_server::Wallet for WalletImpl {
     async fn wallet_balance(&self, request: Request<WalletBalanceRequest>) -> Result<Response<WalletBalanceResponse>> {
-        println!("Got a request: {:?}", request);
+        println!("Got a request: {request:?}");
 
         let balance = self.wallet_service.balance().into();
 
@@ -199,7 +179,7 @@ impl wallet_server::Wallet for WalletImpl {
     }
 
     async fn new_address(&self, request: Request<NewAddressRequest>) -> Result<Response<NewAddressResponse>> {
-        println!("Got a request: {:?}", request);
+        println!("Got a request: {request:?}");
 
         let address = self.wallet_service.reveal_next_address();
 
@@ -210,7 +190,7 @@ impl wallet_server::Wallet for WalletImpl {
     }
 
     async fn list_unspent(&self, request: Request<ListUnspentRequest>) -> Result<Response<ListUnspentResponse>> {
-        println!("Got a request: {:?}", request);
+        println!("Got a request: {request:?}");
 
         let utxos: Vec<_> = self.wallet_service.list_unspent().into_iter()
             .map(Into::into)
@@ -222,9 +202,9 @@ impl wallet_server::Wallet for WalletImpl {
     type RegisterConfidenceNtfnStream = BoxStream<'static, Result<ConfEvent>>;
 
     async fn register_confidence_ntfn(&self, request: Request<ConfRequest>) -> Result<Response<Self::RegisterConfidenceNtfnStream>> {
-        println!("Got a request: {:?}", request);
+        println!("Got a request: {request:?}");
 
-        let txid = request.into_inner().tx_id.my_try_into()?;
+        let txid = request.into_inner().tx_id.try_proto_into()?;
         let conf_events = self.wallet_service.get_tx_confidence_stream(txid)
             .map(|o| Ok(o.map(Into::into).unwrap_or_default()))
             .boxed();
@@ -263,243 +243,4 @@ fn handle_request<Req, Res, F>(request: Request<Req>, handler: F) -> Result<Resp
     let response = handler(request, &mut trade_model.lock().unwrap())?;
 
     Ok(Response::new(response))
-}
-
-type Result<T, E = Status> = std::result::Result<T, E>;
-
-impl From<musigrpc::Role> for Role {
-    fn from(value: musigrpc::Role) -> Self {
-        match value {
-            musigrpc::Role::SellerAsMaker => Self::SellerAsMaker,
-            musigrpc::Role::SellerAsTaker => Self::SellerAsTaker,
-            musigrpc::Role::BuyerAsMaker => Self::BuyerAsMaker,
-            musigrpc::Role::BuyerAsTaker => Self::BuyerAsTaker
-        }
-    }
-}
-
-impl From<ProtocolErrorKind> for Status {
-    fn from(value: ProtocolErrorKind) -> Self {
-        Self::internal(value.to_string())
-    }
-}
-
-trait MyTryInto<T> {
-    fn my_try_into(self) -> Result<T>;
-}
-
-macro_rules! impl_my_try_into_for_slice {
-    ($into_type:ty, $err_msg:literal) => {
-        impl MyTryInto<$into_type> for &[u8] {
-            fn my_try_into(self) -> Result<$into_type> {
-                self.try_into().map_err(|_| Status::invalid_argument($err_msg))
-            }
-        }
-    }
-}
-
-impl_my_try_into_for_slice!(Point, "could not decode nonzero point");
-impl_my_try_into_for_slice!(PubNonce, "could not decode pub nonce");
-impl_my_try_into_for_slice!(Scalar, "could not decode nonzero scalar");
-impl_my_try_into_for_slice!(MaybeScalar, "could not decode scalar");
-impl_my_try_into_for_slice!(LiftedSignature, "could not decode signature");
-
-impl MyTryInto<Txid> for &[u8] {
-    fn my_try_into(self) -> Result<Txid> {
-        Txid::from_slice(self).map_err(|_| Status::invalid_argument("could not decode txid"))
-    }
-}
-
-impl MyTryInto<Role> for i32 {
-    fn my_try_into(self) -> Result<Role> {
-        TryInto::<musigrpc::Role>::try_into(self)
-            .map_err(|UnknownEnumValue(i)| Status::out_of_range(format!("unknown enum value: {i}")))
-            .map(Into::into)
-    }
-}
-
-impl MyTryInto<Address<NetworkUnchecked>> for &str {
-    fn my_try_into(self) -> Result<Address<NetworkUnchecked>> {
-        self.parse::<Address<_>>()
-            .map_err(|e| Status::invalid_argument(format!("could not parse address: {e}")))
-    }
-}
-
-impl MyTryInto<RedirectionReceiver<NetworkUnchecked>> for ReceiverAddressAndAmount {
-    fn my_try_into(self) -> Result<RedirectionReceiver<NetworkUnchecked>> {
-        Ok(RedirectionReceiver {
-            address: self.address.my_try_into()?,
-            amount: Amount::from_sat(self.amount),
-        })
-    }
-}
-
-impl<T> MyTryInto<T> for Vec<u8> where for<'a> &'a [u8]: MyTryInto<T> {
-    fn my_try_into(self) -> Result<T> { (&self[..]).my_try_into() }
-}
-
-impl<T, S: MyTryInto<T>> MyTryInto<Option<T>> for Option<S> {
-    fn my_try_into(self) -> Result<Option<T>> {
-        Ok(match self {
-            None => None,
-            Some(x) => Some(x.my_try_into()?)
-        })
-    }
-}
-
-impl From<ExchangedNonces<'_, ByRef>> for NonceSharesMessage {
-    fn from(value: ExchangedNonces<ByRef>) -> Self {
-        Self {
-            // Use default values for proto fields besides the nonce shares. TODO: A little hacky; consider refactoring proto.
-            warning_tx_fee_bump_address: String::default(),
-            redirect_tx_fee_bump_address: String::default(),
-            half_deposit_psbt: Vec::default(),
-            // Actual nonce shares...
-            swap_tx_input_nonce_share:
-            value.swap_tx_input_nonce_share.serialize().into(),
-            buyers_warning_tx_buyer_input_nonce_share:
-            value.buyers_warning_tx_buyer_input_nonce_share.serialize().into(),
-            buyers_warning_tx_seller_input_nonce_share:
-            value.buyers_warning_tx_seller_input_nonce_share.serialize().into(),
-            sellers_warning_tx_buyer_input_nonce_share:
-            value.sellers_warning_tx_buyer_input_nonce_share.serialize().into(),
-            sellers_warning_tx_seller_input_nonce_share:
-            value.sellers_warning_tx_seller_input_nonce_share.serialize().into(),
-            buyers_redirect_tx_input_nonce_share:
-            value.buyers_redirect_tx_input_nonce_share.serialize().into(),
-            sellers_redirect_tx_input_nonce_share:
-            value.sellers_redirect_tx_input_nonce_share.serialize().into(),
-        }
-    }
-}
-
-impl<'a> MyTryInto<ExchangedNonces<'a, ByVal>> for NonceSharesMessage {
-    fn my_try_into(self) -> Result<ExchangedNonces<'a, ByVal>> {
-        Ok(ExchangedNonces {
-            swap_tx_input_nonce_share:
-            self.swap_tx_input_nonce_share.my_try_into()?,
-            buyers_warning_tx_buyer_input_nonce_share:
-            self.buyers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-            buyers_warning_tx_seller_input_nonce_share:
-            self.buyers_warning_tx_seller_input_nonce_share.my_try_into()?,
-            sellers_warning_tx_buyer_input_nonce_share:
-            self.sellers_warning_tx_buyer_input_nonce_share.my_try_into()?,
-            sellers_warning_tx_seller_input_nonce_share:
-            self.sellers_warning_tx_seller_input_nonce_share.my_try_into()?,
-            buyers_redirect_tx_input_nonce_share:
-            self.buyers_redirect_tx_input_nonce_share.my_try_into()?,
-            sellers_redirect_tx_input_nonce_share:
-            self.sellers_redirect_tx_input_nonce_share.my_try_into()?,
-        })
-    }
-}
-
-impl From<ExchangedSigs<'_, ByRef>> for PartialSignaturesMessage {
-    fn from(value: ExchangedSigs<ByRef>) -> Self {
-        Self {
-            peers_warning_tx_buyer_input_partial_signature:
-            value.peers_warning_tx_buyer_input_partial_signature.serialize().into(),
-            peers_warning_tx_seller_input_partial_signature:
-            value.peers_warning_tx_seller_input_partial_signature.serialize().into(),
-            peers_redirect_tx_input_partial_signature:
-            value.peers_redirect_tx_input_partial_signature.serialize().into(),
-            swap_tx_input_partial_signature:
-            value.swap_tx_input_partial_signature.map(|s| s.serialize().into()),
-        }
-    }
-}
-
-impl<'a> MyTryInto<ExchangedSigs<'a, ByVal>> for PartialSignaturesMessage {
-    fn my_try_into(self) -> Result<ExchangedSigs<'a, ByVal>> {
-        Ok(ExchangedSigs {
-            peers_warning_tx_buyer_input_partial_signature:
-            self.peers_warning_tx_buyer_input_partial_signature.my_try_into()?,
-            peers_warning_tx_seller_input_partial_signature:
-            self.peers_warning_tx_seller_input_partial_signature.my_try_into()?,
-            peers_redirect_tx_input_partial_signature:
-            self.peers_redirect_tx_input_partial_signature.my_try_into()?,
-            swap_tx_input_partial_signature:
-            self.swap_tx_input_partial_signature.my_try_into()?,
-        })
-    }
-}
-
-impl From<Balance> for WalletBalanceResponse {
-    fn from(value: Balance) -> Self {
-        Self {
-            immature: value.immature.to_sat(),
-            trusted_pending: value.trusted_pending.to_sat(),
-            untrusted_pending: value.untrusted_pending.to_sat(),
-            confirmed: value.confirmed.to_sat(),
-        }
-    }
-}
-
-impl From<LocalOutput> for TransactionOutput {
-    fn from(value: LocalOutput) -> Self {
-        Self {
-            tx_id: value.outpoint.txid.as_byte_array().into(),
-            vout: value.outpoint.vout,
-            script_pub_key: value.txout.script_pubkey.into_bytes(),
-            value: value.txout.value.to_sat(),
-        }
-    }
-}
-
-impl From<TxConfidence> for ConfEvent {
-    fn from(TxConfidence { wallet_tx, num_confirmations }: TxConfidence) -> Self {
-        let mut raw_tx = Vec::new();
-        wallet_tx.tx.consensus_encode(&mut raw_tx).unwrap();
-        let (confidence_type, confirmation_block_time) = match wallet_tx.chain_position {
-            ChainPosition::Confirmed { anchor, .. } =>
-                (ConfidenceType::Confirmed, Some(walletrpc::ConfirmationBlockTime {
-                    block_hash: anchor.block_id.hash.as_byte_array().to_vec(),
-                    block_height: anchor.block_id.height,
-                    confirmation_time: anchor.confirmation_time,
-                })),
-            ChainPosition::Unconfirmed { .. } => (ConfidenceType::Unconfirmed, None)
-        };
-        Self {
-            raw_tx: Some(raw_tx),
-            confidence_type: confidence_type.into(),
-            num_confirmations,
-            confirmation_block_time,
-        }
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "127.0.0.1:50051".parse()?;
-    let musig = MusigImpl::default();
-    let wallet = WalletImpl { wallet_service: Arc::new(WalletServiceImpl::new()) };
-    let wallet_service = wallet.wallet_service.clone();
-    task::spawn(async move {
-        let Err(e) = wallet_service.connect().await;
-        eprintln!("Wallet connection error: {e}");
-    });
-
-    Server::builder()
-        .add_service(MusigServer::new(musig))
-        .add_service(WalletServer::new(wallet))
-        .serve(addr)
-        .await?;
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::walletrpc::{ConfEvent, ConfidenceType};
-
-    #[test]
-    fn conf_event_default() {
-        let missing_tx_conf_event = ConfEvent {
-            raw_tx: None,
-            confidence_type: ConfidenceType::Missing.into(),
-            num_confirmations: 0,
-            confirmation_block_time: None,
-        };
-        assert_eq!(ConfEvent::default(), missing_tx_conf_event);
-    }
 }
