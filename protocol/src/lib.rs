@@ -6,25 +6,35 @@ use bdk_electrum::bdk_core::bitcoin::{TapSighashType, Witness};
 use bdk_wallet::bitcoin::key::TapTweak;
 use musig2::secp::{Point, Scalar};
 use musig2::KeyAggContext;
+use once_cell::sync::OnceCell;
 use tests_common;
 mod protocol_musig_adaptor;
 mod nigiri;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::nigiri;
     use crate::protocol_musig_adaptor::{BMPContext, BMPProtocol, ProtocolRole};
     use bdk_electrum::bdk_core::bitcoin::Amount;
-    use tests_common;
+    
+    static TEST_SETUP: OnceCell<()> = OnceCell::new();
+    
+    pub(crate) fn ensure_test_setup() {
+        TEST_SETUP.get_or_init(|| {
+            tests_common::setup();
+        });
+    }
 
     #[test]
     fn test_musig() -> anyhow::Result<()> {
+        ensure_test_setup();
         initial_tx_creation()?;
         Ok(())
     }
+
     pub fn initial_tx_creation() -> anyhow::Result<(BMPProtocol, BMPProtocol)> {
         println!("running...");
-        tests_common::setup();
         let mut alice_funds = nigiri::funded_wallet();
         //TestWallet::new()?;
 
@@ -81,6 +91,7 @@ mod tests {
 
     #[test]
     fn test_swap() -> anyhow::Result<()> {
+        ensure_test_setup();
         // create all transaction and Broadcast DepositTx already
         let (alice, bob) = initial_tx_creation()?;
         dbg!(&alice.swap_tx.tx);
@@ -94,6 +105,7 @@ mod tests {
 
     #[test]
     fn test_warning() -> anyhow::Result<()> {
+        ensure_test_setup();
         // create all transaction and Broadcast DepositTx already
         let (alice, _bob) = initial_tx_creation()?;
         dbg!(&alice.warning_tx_me.tx);
@@ -105,6 +117,7 @@ mod tests {
 
     #[test]
     fn test_claim() -> anyhow::Result<()> {
+        ensure_test_setup();
         // create all transaction and Broadcast DepositTx already
         let (alice, _bob) = initial_tx_creation()?;
         // dbg!(&alice.warning_tx_me.tx);
@@ -131,6 +144,7 @@ mod tests {
 
     #[test]
     fn test_claim_too_early() -> anyhow::Result<()> {
+        ensure_test_setup();
         // create all transaction and Broadcast DepositTx already
         let (alice, _bob) = initial_tx_creation()?;
         alice.warning_tx_me.broadcast(&alice.ctx);
@@ -155,6 +169,7 @@ mod tests {
 
     #[test]
     fn test_redirect() -> anyhow::Result<()> {
+        ensure_test_setup();
         // create all transaction and Broadcast DepositTx already
         let (alice, bob) = initial_tx_creation()?;
         // dbg!(&alice.warning_tx_me.tx);
@@ -173,6 +188,7 @@ mod tests {
 //noinspection ALL
 #[test]
 fn test_q_tik() -> anyhow::Result<()> {
+    crate::tests::ensure_test_setup();
     // create all transaction and Broadcast DepositTx already
     let (alice, bob) = crate::tests::initial_tx_creation()?;
     // test!(alice.swap_tx.)

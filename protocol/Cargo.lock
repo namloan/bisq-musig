@@ -698,6 +698,7 @@ dependencies = [
  "bdk_wallet",
  "dotenv",
  "musig2",
+ "once_cell",
  "rand 0.9.0",
  "tests-common",
 ]
