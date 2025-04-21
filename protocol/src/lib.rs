@@ -6,6 +6,7 @@ use bdk_electrum::bdk_core::bitcoin::{TapSighashType, Witness};
 use bdk_wallet::bitcoin::key::TapTweak;
 use musig2::secp::{Point, Scalar};
 use musig2::KeyAggContext;
+use tests_common;
 mod protocol_musig_adaptor;
 mod nigiri;
 
@@ -14,6 +15,7 @@ mod tests {
     use crate::nigiri;
     use crate::protocol_musig_adaptor::{BMPContext, BMPProtocol, ProtocolRole};
     use bdk_electrum::bdk_core::bitcoin::Amount;
+    use tests_common;
 
     #[test]
     fn test_musig() -> anyhow::Result<()> {
@@ -22,7 +24,7 @@ mod tests {
     }
     pub fn initial_tx_creation() -> anyhow::Result<(BMPProtocol, BMPProtocol)> {
         println!("running...");
-        nigiri::check_start();
+        tests_common::setup();
         let mut alice_funds = nigiri::funded_wallet();
         //TestWallet::new()?;
 
