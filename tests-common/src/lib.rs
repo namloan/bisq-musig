@@ -75,8 +75,6 @@ pub fn setup() {
         ])
         .output();
 
-    thread::sleep(Duration::from_secs(2));
-
     // Start fresh Nigiri instance
     println!("Starting fresh Nigiri instance...");
     let nigiri_output = Command::new("nigiri")
@@ -103,7 +101,7 @@ pub fn setup() {
 
     // Wait for Nigiri's Bitcoin node to be fully ready
     println!("Waiting for Nigiri services to be ready...");
-    thread::sleep(Duration::from_secs(10));
+    thread::sleep(Duration::from_secs(2));
 
     println!("Setup completed successfully.");
 } 
