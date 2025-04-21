@@ -1,8 +1,27 @@
+//! Common test utilities for Bitcoin-related testing
+//! 
+//! This crate provides common utilities for setting up test environments,
+//! particularly for Bitcoin-related testing using Nigiri.
+
+use std::process::Command;
+use std::thread;
+use std::time::Duration;
+
+/// Sets up a test environment with Nigiri (Bitcoin test environment)
+/// 
+/// This function:
+/// 1. Checks if Docker is running
+/// 2. Stops any existing Nigiri instance
+/// 3. Cleans up existing Bitcoin container and data
+/// 4. Starts a fresh Nigiri instance
+/// 5. Waits for services to be ready
+/// 
+/// # Panics
+/// 
+/// This function will panic if:
+/// - Docker is not running or not installed
+/// - Nigiri fails to start
 pub fn setup() {
-    use std::process::Command;
-    use std::thread;
-    use std::time::Duration;
-        
     println!("Starting the setup...");
 
     // Check if Docker is running
@@ -87,5 +106,4 @@ pub fn setup() {
     thread::sleep(Duration::from_secs(10));
 
     println!("Setup completed successfully.");
-}
-
+} 
