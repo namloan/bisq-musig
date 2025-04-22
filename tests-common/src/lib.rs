@@ -104,4 +104,34 @@ pub fn setup() {
     thread::sleep(Duration::from_secs(2));
 
     println!("Setup completed successfully.");
+}
+
+/// Funds a Bitcoin address using Nigiri's faucet and mines a block
+/// 
+/// # Arguments
+/// 
+/// * `address` - The Bitcoin address to fund
+pub fn fund_address(address: &str) {
+    let faucet_response = Command::new("nigiri")
+        .args(["faucet", address])
+        .output()
+        .expect("Failed to fund wallet");
+    eprintln!("{}", String::from_utf8_lossy(&faucet_response.stdout));
+
+    eprintln!("Mining to {}", address);
+    let resp = mine(address, 1);
+    eprintln!("response {}", String::from_utf8_lossy(&resp.stdout));
+}
+
+/// Mines a specified number of blocks to a given address using Nigiri
+/// 
+/// # Arguments
+/// 
+/// * `address` - The Bitcoin address to mine to
+/// * `num_blocks` - Number of blocks to mine
+pub fn mine(address: &str, num_blocks: u16) -> std::process::Output {
+    Command::new("nigiri")
+        .args(["rpc", "generatetoaddress", &num_blocks.to_string(), address])
+        .output()
+        .expect("Failed to mine block")
 } 
