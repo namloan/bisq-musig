@@ -13,4 +13,4 @@ anyhow = "1.0.93"
 dotenv = "0.15.0"
 
 [dev-dependencies]
-tests-common = { path = "../tests-common" }
+regtest-env = { path = "../regtest-env" }

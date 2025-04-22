@@ -4,7 +4,7 @@ use crate::protocol_musig_adaptor::MemWallet;
 use bdk_wallet::bitcoin::Amount;
 use std::process::Output;
 use std::{thread, time};
-use tests_common::{fund_address, mine};
+use regtest_env::{fund_address, mine};
 
 pub(crate) fn funded_wallet() -> MemWallet {
     println!("loading wallet...");

@@ -11,8 +11,8 @@ dependencies = [
  "dotenv",
  "musig2",
  "rand",
+ "regtest-env",
  "secp",
- "tests-common",
 ]
 
 [[package]]
@@ -562,6 +562,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "regtest-env"
+version = "0.1.0"
+
+[[package]]
 name = "ring"
 version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -784,10 +788,6 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
-
-[[package]]
-name = "tests-common"
-version = "0.1.0"
 
 [[package]]
 name = "tokio"

@@ -1,4 +1,4 @@
-use tests_common::setup;
+use regtest_env::setup;
 use std::{process::Command, thread, time};
 use std::time::SystemTime;
 

@@ -7,7 +7,7 @@ use bdk_wallet::bitcoin::key::TapTweak;
 use musig2::secp::{Point, Scalar};
 use musig2::KeyAggContext;
 use once_cell::sync::OnceCell;
-use tests_common;
+use regtest_env;
 mod protocol_musig_adaptor;
 mod wallet_test_utils;
 
@@ -22,7 +22,7 @@ mod tests {
     
     pub(crate) fn ensure_test_setup() {
         TEST_SETUP.get_or_init(|| {
-            tests_common::setup();
+            regtest_env::setup();
         });
     }
 
