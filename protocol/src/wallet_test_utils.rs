@@ -35,4 +35,4 @@ const FUND_ADDRESS: &str = "bcrt1plrmcqc9pwf4zjcej5n7ynre5k8lkn0xcz0c7y3dw37e8nq
 
 pub(crate) fn tiktok() -> Output {
     mine(FUND_ADDRESS, 1)
-}
+} 
