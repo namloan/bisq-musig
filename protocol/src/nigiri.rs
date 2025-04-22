@@ -54,23 +54,3 @@ fn mine(address: &str, num_blocks: u16) -> Output {
         .output()
         .expect("Failed to mine block")
 }
-
-#[test]
-pub(crate) fn check_start() {
-    // Step 2: Run 'nigiri start' to start Nigiri
-    let nigiri_output = Command::new("nigiri").arg("start").output().unwrap();
-
-    if nigiri_output.status.success() {
-        eprintln!("Nigiri starting...");
-        thread::sleep(time::Duration::from_secs(3));
-        eprintln!("Nigiri started successfully.");
-    } else {
-        let msg = String::from_utf8_lossy(&nigiri_output.stderr);
-        if !msg.contains("already running") {
-            panic!(
-                "Failed to start Nigiri. Please install Docker and Nigiri manually. Error: {}",
-                String::from_utf8_lossy(&nigiri_output.stderr)
-            );
-        }
-    }
-}
