@@ -101,7 +101,7 @@ pub fn setup() {
 
     // Wait for Nigiri's Bitcoin node to be fully ready
     println!("Waiting for Nigiri services to be ready...");
-    thread::sleep(Duration::from_secs(2));
+    thread::sleep(Duration::from_secs(5));
 
     println!("Setup completed successfully.");
 }
