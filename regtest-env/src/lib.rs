@@ -101,9 +101,139 @@ pub fn setup() {
 
     // Wait for Nigiri's Bitcoin node to be fully ready
     println!("Waiting for Nigiri services to be ready...");
-    thread::sleep(Duration::from_secs(5));
+    wait_for_nigiri_ready();
 
     println!("Setup completed successfully.");
+}
+
+/// Checks if Nigiri's Bitcoin node is ready by performing multiple verification steps
+/// 
+/// This function performs a series of increasingly complex operations to verify
+/// that the Bitcoin node is fully operational, with proper error handling and
+/// retry logic.
+fn wait_for_nigiri_ready() {
+    println!("Checking if Nigiri Bitcoin node is ready...");
+    let start_time = std::time::Instant::now();
+    let timeout = Duration::from_secs(180); // 3 minute timeout
+    
+    // Step 1: Wait for bitcoind to be fully started with retry
+    let mut bitcoind_ready = false;
+    while !bitcoind_ready {
+        if start_time.elapsed() > timeout {
+            eprintln!("Timed out waiting for Nigiri bitcoind to be ready");
+            std::process::exit(1);
+        }
+        
+        // Check if bitcoind is accepting connections
+        let ping_result = Command::new("nigiri")
+            .args(["rpc", "ping"])
+            .output();
+            
+        match ping_result {
+            Ok(output) if output.status.success() => {
+                println!("Bitcoin daemon is accepting basic commands");
+                bitcoind_ready = true;
+            }
+            _ => {
+                println!("Waiting for Bitcoin daemon to accept connections...");
+                thread::sleep(Duration::from_secs(2));
+            }
+        }
+    }
+    
+    // Step 2: Verify blockchain info is available
+    let mut blockchain_ready = false;
+    while !blockchain_ready {
+        if start_time.elapsed() > timeout {
+            eprintln!("Timed out waiting for blockchain to be available");
+            std::process::exit(1);
+        }
+        
+        let blockchain_result = Command::new("nigiri")
+            .args(["rpc", "getblockchaininfo"])
+            .output();
+            
+        match blockchain_result {
+            Ok(output) if output.status.success() => {
+                println!("Blockchain information is available");
+                blockchain_ready = true;
+            }
+            _ => {
+                println!("Waiting for blockchain to be available...");
+                thread::sleep(Duration::from_secs(2));
+            }
+        }
+    }
+    
+    // Step 3: Generate a test address and mine blocks - ultimate test of readiness
+    let mut mining_successful = false;
+    let mut retries = 0;
+    const MAX_RETRIES: u8 = 5;
+    
+    // Use the default wallet instead of creating a new one
+    while !mining_successful && retries < MAX_RETRIES {
+        retries += 1;
+        println!("Verification attempt #{}: Testing mining capability", retries);
+        
+        // Get a new address using the default wallet
+        let address_result = Command::new("nigiri")
+            .args(["rpc", "getnewaddress"])
+            .output();
+            
+        match address_result {
+            Ok(output) if output.status.success() => {
+                let address = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if address.is_empty() {
+                    println!("Got empty address, retrying...");
+                    thread::sleep(Duration::from_secs(3));
+                    continue;
+                }
+                
+                println!("Generated test address: {}", address);
+                
+                // Try to mine a block to this address
+                let mine_result = Command::new("nigiri")
+                    .args(["rpc", "generatetoaddress", "1", &address])
+                    .output();
+                    
+                match mine_result {
+                    Ok(mine_output) if mine_output.status.success() => {
+                        // Verify the block was actually mined
+                        let block_count_result = Command::new("nigiri")
+                            .args(["rpc", "getblockcount"])
+                            .output();
+                            
+                        if let Ok(block_output) = block_count_result {
+                            if block_output.status.success() {
+                                println!("Block mining successful!");
+                                mining_successful = true;
+                                break;
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("Mining failed, waiting before retry...");
+                        thread::sleep(Duration::from_secs(5));
+                    }
+                }
+            }
+            _ => {
+                println!("Failed to get address, waiting before retry...");
+                thread::sleep(Duration::from_secs(3));
+            }
+        }
+    }
+    
+    if mining_successful {
+        println!("Nigiri Bitcoin node is fully operational!");
+    } else {
+        eprintln!("Failed to verify Nigiri after {} attempts", MAX_RETRIES);
+        eprintln!("Tests may fail.");
+        // Continue anyway to let tests attempt to run
+    }
+    
+    // Allow the system to stabilize before proceeding
+    thread::sleep(Duration::from_secs(3));
 }
 
 /// Funds a Bitcoin address using Nigiri's faucet and mines a block
